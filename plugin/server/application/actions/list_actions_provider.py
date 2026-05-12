@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from plugin.logging_config import get_logger
+from plugin.sdk.shared.i18n import load_plugin_i18n_from_meta, resolve_i18n_refs
 from plugin.server.domain.action_models import ActionDescriptor
 
 logger = get_logger("server.application.actions.list_actions_provider")
@@ -23,6 +24,21 @@ logger = get_logger("server.application.actions.list_actions_provider")
 
 _NAVIGATION_KINDS = frozenset({"ui", "url", "route"})
 _CHAT_INJECT_KIND = "chat_inject"
+
+
+def _resolve_default_locale() -> str:
+    try:
+        from utils.language_utils import get_global_language_full
+
+        return str(get_global_language_full() or "en")
+    except Exception:
+        return "en"
+
+
+def _normalize_target(raw_target: str, plugin_id: str) -> str:
+    # `{plugin_id}` placeholder mirrors plugin-list UI normalization in
+    # ui_query_service._normalize_plugin_list_action.
+    return raw_target.replace("{plugin_id}", plugin_id)
 
 
 def _safe_priority(value: Any) -> int:
@@ -52,14 +68,20 @@ def _map_list_action(
     plugin_name: str,
     action: dict[str, Any],
 ) -> ActionDescriptor | None:
-    """Convert a single list_action dict to an ``ActionDescriptor``."""
+    """Convert a single list_action dict to an ``ActionDescriptor``.
+
+    The caller is expected to have already resolved any ``$i18n`` refs in
+    ``action`` so that ``label`` / ``description`` are plain strings.
+    """
     action_id = action.get("id")
     if not isinstance(action_id, str) or not action_id.strip():
         return None
 
     kind = str(action.get("kind", "")).strip().lower()
-    label = str(action.get("label") or action_id)
-    description = str(action.get("description") or "")
+    label_raw = action.get("label")
+    label = label_raw if isinstance(label_raw, str) and label_raw else action_id
+    description_raw = action.get("description")
+    description = description_raw if isinstance(description_raw, str) else ""
     full_action_id = f"{plugin_id}:{action_id}"
     quick = _safe_bool(action.get("quick_action", False))
     icon_override = action.get("icon")
@@ -70,7 +92,7 @@ def _map_list_action(
         if not isinstance(target, str) or not target.strip():
             inject_text = f"@{plugin_id} /{action_id}"
         else:
-            inject_text = target
+            inject_text = _normalize_target(target, plugin_id)
         return ActionDescriptor(
             action_id=full_action_id,
             type="chat_inject",
@@ -94,7 +116,7 @@ def _map_list_action(
                 action_id,
             )
             return None
-        target = raw_target.strip()
+        target = _normalize_target(raw_target.strip(), plugin_id)
         open_in = action.get("open_in")
         if open_in not in ("new_tab", "same_tab"):
             open_in = "new_tab"
@@ -134,6 +156,7 @@ def _collect_list_actions_sync(
     from plugin.core.state import state
 
     plugins_snapshot = state.get_plugins_snapshot_cached()
+    locale = _resolve_default_locale()
     actions: list[ActionDescriptor] = []
 
     for pid, meta_raw in plugins_snapshot.items():
@@ -143,7 +166,9 @@ def _collect_list_actions_sync(
         if not isinstance(meta_raw, Mapping):
             continue
         meta: dict[str, Any] = dict(meta_raw)
-        plugin_name = str(meta.get("name") or pid)
+        plugin_i18n = load_plugin_i18n_from_meta(meta)
+        resolved_name = resolve_i18n_refs(meta.get("name") or pid, plugin_i18n, locale=locale)
+        plugin_name = str(resolved_name or pid)
 
         # list_actions may be stored under the "list_actions" key in metadata
         raw_list_actions = meta.get("list_actions")
@@ -153,8 +178,10 @@ def _collect_list_actions_sync(
         for raw_action in raw_list_actions:
             if not isinstance(raw_action, Mapping):
                 continue
-            action_dict = dict(raw_action)
-            descriptor = _map_list_action(pid, plugin_name, action_dict)
+            resolved_action = resolve_i18n_refs(dict(raw_action), plugin_i18n, locale=locale)
+            if not isinstance(resolved_action, dict):
+                continue
+            descriptor = _map_list_action(pid, plugin_name, resolved_action)
             if descriptor is not None:
                 actions.append(descriptor)
 

@@ -242,8 +242,6 @@ class TestSettingsActions:
         from pydantic import BaseModel, Field
 
         class _FakeSettings(BaseModel):
-            class Config:
-                pass
             model_config = {"toml_section": "settings"}
             enabled: bool = Field(default=False, json_schema_extra={"hot": True})
 

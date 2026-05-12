@@ -192,3 +192,58 @@ class TestCollectListActions:
     def test_non_mapping_meta_skipped(self) -> None:
         state = _FakeState(plugins={"bad": "not-a-dict"})
         assert _collect(state) == []
+
+    def test_navigation_target_substitutes_plugin_id(self) -> None:
+        state = _FakeState(plugins={"my-plugin": {
+            "name": "MyPlugin",
+            "list_actions": [
+                {"id": "panel", "kind": "route", "label": "Panel",
+                 "target": "/plugins/{plugin_id}?tab=panel"},
+            ],
+        }})
+        actions = _collect(state)
+        assert len(actions) == 1
+        assert actions[0].target == "/plugins/my-plugin?tab=panel"
+
+    def test_chat_inject_target_substitutes_plugin_id(self) -> None:
+        state = _FakeState(plugins={"demo": {
+            "name": "Demo",
+            "list_actions": [
+                {"id": "say", "kind": "chat_inject", "label": "Say",
+                 "target": "@{plugin_id} hello"},
+            ],
+        }})
+        actions = _collect(state)
+        assert len(actions) == 1
+        assert actions[0].inject_text == "@demo hello"
+
+    def test_i18n_ref_label_is_resolved(self, tmp_path) -> None:
+        # Mock plugin i18n: write a translations file the loader can find.
+        plugin_dir = tmp_path / "i18n_plugin"
+        plugin_dir.mkdir()
+        translations_dir = plugin_dir / "i18n"
+        translations_dir.mkdir()
+        (translations_dir / "en.json").write_text(
+            '{"actions.open_ui.label": "Open UI"}', encoding="utf-8"
+        )
+        config_path = plugin_dir / "config.toml"
+        config_path.write_text("", encoding="utf-8")
+
+        state = _FakeState(plugins={"demo": {
+            "name": "Demo",
+            "config_path": str(config_path),
+            "list_actions": [
+                {
+                    "id": "open",
+                    "kind": "ui",
+                    "label": {"$i18n": "actions.open_ui.label", "default": "Open UI"},
+                    "target": "/ui",
+                },
+            ],
+        }})
+        actions = _collect(state)
+        assert len(actions) == 1
+        assert actions[0].label == "Open UI"
+        # The label must not leak the raw mapping repr.
+        assert "$i18n" not in actions[0].label
+        assert "{" not in actions[0].label

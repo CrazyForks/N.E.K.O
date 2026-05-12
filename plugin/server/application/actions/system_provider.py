@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 from plugin.logging_config import get_logger
 from plugin.sdk.shared.i18n import load_plugin_i18n_from_meta, resolve_i18n_refs
+from plugin.server.application.plugins.ui_query_service import _has_static_ui_from_meta
 from plugin.server.domain.action_models import ActionDescriptor
 
 logger = get_logger("server.application.actions.system_provider")
@@ -28,34 +28,13 @@ logger = get_logger("server.application.actions.system_provider")
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _to_bool(value: object, *, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"1", "true", "yes", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "off"}:
-            return False
-    return default
 
-
-def _has_static_ui(meta: dict[str, Any]) -> bool:
-    """Check whether a plugin has a usable static UI directory."""
-    static_ui_obj = meta.get("static_ui_config")
-    if not isinstance(static_ui_obj, Mapping):
-        return False
-    enabled = _to_bool(static_ui_obj.get("enabled"), default=False)
-    if not enabled:
-        return False
-    directory = static_ui_obj.get("directory")
-    if not isinstance(directory, str) or not directory:
-        return False
-    index_file = static_ui_obj.get("index_file", "index.html")
-    if not isinstance(index_file, str) or not index_file:
-        index_file = "index.html"
-    p = Path(directory)
-    return p.is_dir() and (p / index_file).is_file()
+def _has_static_ui(meta: Mapping[str, object]) -> bool:
+    # Delegate to ui_query_service so plugins relying on the conventional
+    # ``<plugin dir>/static/index.html`` inference (with no explicit
+    # static_ui_config) are also recognized — matches the behavior of the
+    # `/plugin/{id}/ui/` route.
+    return _has_static_ui_from_meta(meta)
 
 
 def _resolve_default_locale() -> str:

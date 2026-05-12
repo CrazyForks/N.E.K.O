@@ -278,3 +278,15 @@ class TestHasStaticUi:
         (tmp_path / "index.html").write_text("<html></html>")
         meta = {"static_ui_config": {"enabled": True, "directory": str(tmp_path)}}
         assert module._has_static_ui(meta) is True
+
+    def test_inferred_from_static_dir(self, tmp_path: Path) -> None:
+        """Plugins with only <plugin dir>/static/index.html and no explicit
+        static_ui_config should still be recognized, matching what the
+        /plugin/{id}/ui/ route actually serves."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("", encoding="utf-8")
+        static_dir = tmp_path / "static"
+        static_dir.mkdir()
+        (static_dir / "index.html").write_text("<html></html>", encoding="utf-8")
+        meta = {"id": "demo", "config_path": str(config_path)}
+        assert module._has_static_ui(meta) is True
