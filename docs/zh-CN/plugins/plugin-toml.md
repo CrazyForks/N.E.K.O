@@ -141,7 +141,7 @@ locales_dir = "i18n"
 
 如果你的插件需要支持多语言，在插件目录下创建 `i18n/` 文件夹，放入语言文件：
 
-```
+```text
 i18n/
 ├── en.json
 └── zh-CN.json
@@ -217,7 +217,7 @@ max_per_page = notes_cfg.get("max_per_page", 20)
 
 ## 这个插件的目录结构
 
-```
+```text
 plugin/plugins/smart_notes/
 ├── plugin.toml              ← 就是上面这个文件
 ├── __init__.py              ← 插件代码

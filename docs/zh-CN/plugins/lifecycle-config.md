@@ -1,6 +1,6 @@
 # 生命周期
 
-插件在运行过程中会经历不同的阶段：启动、停止、重载、配置变更等。你可以在这些时刻执行自己的逻辑。
+插件在运行过程中会经历不同的阶段：启动、停止、配置变更等。你可以在这些时刻执行自己的逻辑。
 
 所有生命周期钩子都是**可选的**。不需要就不写。
 
@@ -10,6 +10,7 @@
 
 ```python
 from plugin.sdk.plugin import NekoPluginBase, neko_plugin, lifecycle, Ok
+import aiohttp
 
 @neko_plugin
 class MyPlugin(NekoPluginBase):
@@ -42,17 +43,9 @@ class MyPlugin(NekoPluginBase):
 
 ## 用户点击重载
 
-用户在插件管理面板中点击"重载"时触发。适合重新加载资源。
+插件管理面板中的重载目前会重启插件：先执行 `shutdown`，再重新启动插件并执行 `startup`。清理逻辑放在 `shutdown`，初始化或配置刷新逻辑放在 `startup`。
 
-```python
-    @lifecycle(id="reload")
-    async def on_reload(self):
-        # 重新读取配置
-        cfg = await self.config.dump()
-        self.api_url = cfg.get("my_settings", {}).get("api_url", "https://default.com")
-        self.logger.info("配置已重载")
-        return Ok({"status": "reloaded"})
-```
+SDK 装饰器仍然接受 `reload` 生命周期 ID 用于兼容，但插件管理面板的重载按钮不会派发它。
 
 ## 配置被外部修改
 
@@ -60,20 +53,20 @@ class MyPlugin(NekoPluginBase):
 
 ```python
     @lifecycle(id="config_change")
-    async def on_config_change(self):
-        cfg = await self.config.dump()
-        self.timeout = cfg.get("my_settings", {}).get("timeout", 30)
+    async def on_config_change(self, old_config, new_config, mode):
+        self.timeout = new_config.get("my_settings", {}).get("timeout", 30)
+        self.logger.info("配置更新模式: {}", mode)
         self.logger.info("配置已更新，新超时: {}s", self.timeout)
         return Ok({"status": "config_updated"})
 ```
 
-## 所有生命周期 ID
+## 生命周期事件和重载行为
 
-| ID | 触发时机 | 典型用途 |
+| 事件/操作 | 发生时机 | 典型用途 |
 |----|----------|----------|
 | `startup` | 插件进程启动 | 初始化、加载配置、打开连接 |
 | `shutdown` | 插件进程停止 | 关闭连接、保存状态、释放资源 |
-| `reload` | 用户点击重载 | 重新加载配置和资源 |
+| 插件管理面板重载 | 用户点击重载 | 先执行 `shutdown`，再执行 `startup` |
 | `config_change` | 配置被外部修改 | 应用新设置 |
 | `freeze` | 插件被挂起 | 暂停定时任务 |
 | `unfreeze` | 插件被恢复 | 恢复定时任务 |
@@ -107,9 +100,9 @@ class WeatherPlugin(NekoPluginBase):
         return Ok({"status": "stopped"})
 
     @lifecycle(id="config_change")
-    async def on_config_change(self):
-        cfg = await self.config.dump()
-        self.api_url = cfg.get("weather", {}).get("api_url", "https://wttr.in")
+    async def on_config_change(self, old_config, new_config, mode):
+        self.api_url = new_config.get("weather", {}).get("api_url", "https://wttr.in")
+        self.logger.info("Config updated with mode={}", mode)
         return Ok({"status": "config_updated"})
 
     @plugin_entry(id="get_weather", name="查天气", description="查询城市天气")

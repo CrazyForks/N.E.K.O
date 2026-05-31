@@ -141,7 +141,7 @@ locales_dir = "i18n"
 
 If your plugin needs multiple languages, create an `i18n/` folder in your plugin directory with locale files:
 
-```
+```text
 i18n/
 ├── en.json
 └── zh-CN.json
@@ -217,7 +217,7 @@ You can define as many custom sections as you want, named however you like.
 
 ## Directory structure for this plugin
 
-```
+```text
 plugin/plugins/smart_notes/
 ├── plugin.toml              ← the file above
 ├── __init__.py              ← plugin code

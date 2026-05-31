@@ -1,6 +1,6 @@
 # Lifecycle
 
-Plugins go through different phases during their lifetime: startup, shutdown, reload, config change, etc. You can hook into these moments to run your own logic.
+Plugins go through different phases during their lifetime: startup, shutdown, config change, etc. You can hook into these moments to run your own logic.
 
 All lifecycle hooks are **optional**. Don't need one? Don't write it.
 
@@ -10,6 +10,7 @@ After the plugin process starts, the `startup` hook is called. Good for initiali
 
 ```python
 from plugin.sdk.plugin import NekoPluginBase, neko_plugin, lifecycle, Ok
+import aiohttp
 
 @neko_plugin
 class MyPlugin(NekoPluginBase):
@@ -42,16 +43,9 @@ Called when the plugin is stopped or N.E.K.O shuts down. Good for closing connec
 
 ## User clicks Reload
 
-Triggered when the user clicks "Reload" in Plugin Manager. Good for reloading resources.
+Plugin Manager reload currently restarts the plugin: it runs `shutdown`, then starts the plugin again and runs `startup`. Put cleanup in `shutdown` and initialization or config refresh in `startup`.
 
-```python
-    @lifecycle(id="reload")
-    async def on_reload(self):
-        cfg = await self.config.dump()
-        self.api_url = cfg.get("my_settings", {}).get("api_url", "https://default.com")
-        self.logger.info("Config reloaded")
-        return Ok({"status": "reloaded"})
-```
+The `reload` lifecycle ID is accepted by the SDK decorator for compatibility, but the Plugin Manager reload button does not dispatch it.
 
 ## Config changed externally
 
@@ -59,20 +53,20 @@ Triggered when config is modified via UI or API. Good for applying new settings 
 
 ```python
     @lifecycle(id="config_change")
-    async def on_config_change(self):
-        cfg = await self.config.dump()
-        self.timeout = cfg.get("my_settings", {}).get("timeout", 30)
+    async def on_config_change(self, old_config, new_config, mode):
+        self.timeout = new_config.get("my_settings", {}).get("timeout", 30)
+        self.logger.info("Config update mode: {}", mode)
         self.logger.info("Config updated, new timeout: {}s", self.timeout)
         return Ok({"status": "config_updated"})
 ```
 
-## All lifecycle IDs
+## Lifecycle events and reload behavior
 
-| ID | When it fires | Typical use |
+| Event/action | When it happens | Typical use |
 |----|---------------|-------------|
 | `startup` | Plugin process starts | Initialize, load config, open connections |
 | `shutdown` | Plugin process stops | Close connections, save state, release resources |
-| `reload` | User clicks Reload | Reload config and resources |
+| Plugin Manager Reload | User clicks Reload | Runs `shutdown`, then `startup` |
 | `config_change` | Config modified externally | Apply new settings |
 | `freeze` | Plugin is suspended | Pause timers |
 | `unfreeze` | Plugin is resumed | Resume timers |
@@ -106,9 +100,9 @@ class WeatherPlugin(NekoPluginBase):
         return Ok({"status": "stopped"})
 
     @lifecycle(id="config_change")
-    async def on_config_change(self):
-        cfg = await self.config.dump()
-        self.api_url = cfg.get("weather", {}).get("api_url", "https://wttr.in")
+    async def on_config_change(self, old_config, new_config, mode):
+        self.api_url = new_config.get("weather", {}).get("api_url", "https://wttr.in")
+        self.logger.info("Config updated with mode={}", mode)
         return Ok({"status": "config_updated"})
 
     @plugin_entry(id="get_weather", name="Get Weather", description="Look up city weather")

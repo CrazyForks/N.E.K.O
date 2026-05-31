@@ -141,7 +141,7 @@ locales_dir = "i18n"
 
 多言語対応が必要な場合、プラグインディレクトリに `i18n/` フォルダーを作り、ロケールファイルを置きます。
 
-```
+```text
 i18n/
 ├── en.json
 └── zh-CN.json
@@ -217,7 +217,7 @@ max_per_page = notes_cfg.get("max_per_page", 20)
 
 ## このプラグインのディレクトリ構造
 
-```
+```text
 plugin/plugins/smart_notes/
 ├── plugin.toml              ← 上記の設定ファイル
 ├── __init__.py              ← プラグインコード

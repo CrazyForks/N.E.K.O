@@ -1,6 +1,6 @@
 # ライフサイクル
 
-プラグインは起動、停止、リロード、設定変更など、実行中にいくつかの段階を通ります。ライフサイクルフックを使うと、そのタイミングで独自の処理を実行できます。
+プラグインは起動、停止、設定変更など、実行中にいくつかの段階を通ります。ライフサイクルフックを使うと、そのタイミングで独自の処理を実行できます。
 
 すべてのライフサイクルフックは **任意** です。必要なければ書かなくてかまいません。
 
@@ -10,6 +10,7 @@
 
 ```python
 from plugin.sdk.plugin import NekoPluginBase, neko_plugin, lifecycle, Ok
+import aiohttp
 
 @neko_plugin
 class MyPlugin(NekoPluginBase):
@@ -42,16 +43,9 @@ class MyPlugin(NekoPluginBase):
 
 ## ユーザーが Reload を押したとき
 
-Plugin Manager でユーザーが "Reload" を押したときに発火します。設定やリソースの再読み込みに使えます。
+Plugin Manager の Reload は現在、プラグインを再起動します。つまり `shutdown` を実行してから、もう一度起動して `startup` を実行します。後片付けは `shutdown`、初期化や設定の再読み込みは `startup` に置いてください。
 
-```python
-    @lifecycle(id="reload")
-    async def on_reload(self):
-        cfg = await self.config.dump()
-        self.api_url = cfg.get("my_settings", {}).get("api_url", "https://default.com")
-        self.logger.info("Config reloaded")
-        return Ok({"status": "reloaded"})
-```
+SDK デコレーターは互換性のため `reload` ライフサイクル ID を受け付けますが、Plugin Manager の Reload ボタンはこのフックを dispatch しません。
 
 ## 外部から設定が変更されたとき
 
@@ -59,20 +53,20 @@ UI または API 経由で設定が変更されたときに発火します。再
 
 ```python
     @lifecycle(id="config_change")
-    async def on_config_change(self):
-        cfg = await self.config.dump()
-        self.timeout = cfg.get("my_settings", {}).get("timeout", 30)
+    async def on_config_change(self, old_config, new_config, mode):
+        self.timeout = new_config.get("my_settings", {}).get("timeout", 30)
+        self.logger.info("Config update mode: {}", mode)
         self.logger.info("Config updated, new timeout: {}s", self.timeout)
         return Ok({"status": "config_updated"})
 ```
 
-## すべてのライフサイクル ID
+## ライフサイクルイベントと Reload の挙動
 
-| ID | 発火するタイミング | 主な用途 |
+| イベント/操作 | 発火するタイミング | 主な用途 |
 |----|--------------------|----------|
 | `startup` | プラグインプロセス開始時 | 初期化、設定読み込み、接続開始 |
 | `shutdown` | プラグインプロセス停止時 | 接続終了、状態保存、リソース解放 |
-| `reload` | ユーザーが Reload を押したとき | 設定やリソースの再読み込み |
+| Plugin Manager Reload | ユーザーが Reload を押したとき | `shutdown` の後に `startup` を実行 |
 | `config_change` | 設定が外部から変更されたとき | 新しい設定の反映 |
 | `freeze` | プラグインが一時停止されたとき | タイマーの一時停止 |
 | `unfreeze` | プラグインが再開されたとき | タイマーの再開 |
@@ -106,9 +100,9 @@ class WeatherPlugin(NekoPluginBase):
         return Ok({"status": "stopped"})
 
     @lifecycle(id="config_change")
-    async def on_config_change(self):
-        cfg = await self.config.dump()
-        self.api_url = cfg.get("weather", {}).get("api_url", "https://wttr.in")
+    async def on_config_change(self, old_config, new_config, mode):
+        self.api_url = new_config.get("weather", {}).get("api_url", "https://wttr.in")
+        self.logger.info("Config updated with mode={}", mode)
         return Ok({"status": "config_updated"})
 
     @plugin_entry(id="get_weather", name="Get Weather", description="Look up city weather")

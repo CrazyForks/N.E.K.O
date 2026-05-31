@@ -19,7 +19,7 @@ If your plugin only has 1-3 entry points, just write them in the main file. No R
 
 The "Life Kit" plugin has 12 feature modules:
 
-```
+```text
 plugin/plugins/lifekit/
 ├── __init__.py              ← main plugin: registers all routers
 ├── routers/
@@ -162,7 +162,7 @@ A router is not a separate process. It runs in the same process as the main plug
 
 When multiple routers need the same utility functions, put them in the main plugin or a shared module:
 
-```
+```text
 plugin/plugins/lifekit/
 ├── __init__.py          ← main plugin, defines shared methods
 ├── _geo.py              ← shared: geolocation

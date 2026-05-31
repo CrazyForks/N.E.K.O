@@ -227,19 +227,19 @@ content = cache_file.read_text()
 
 ---
 
-## self.bus — Event bus
+## self.bus — Bus snapshots
 
-**When you need it**: You want to pass messages between plugins without calling each other directly (loose coupling). For example, a "note created" event that multiple plugins might want to listen to.
+**When you need it**: You want to read namespaced bus snapshots such as messages, events, lifecycle records, conversations, and memory records.
 
 ```python
-# Publish (any plugin listening for this event will receive it)
-self.bus.emit("note_created", {"title": "New note", "id": 123})
+# Read recent events
+recent_events = self.bus.events.get(event_type="note_created", limit=20)
 
-# Listen (typically registered in startup)
-self.bus.on("note_created", self._on_note_created)
+# Read recent messages
+recent_messages = self.bus.messages.get(limit=20)
 
-async def _on_note_created(self, data):
-    self.logger.info("New note: {}", data["title"])
+# Read memory records from a bucket
+memory_records = self.bus.memory.get(bucket_id="default", limit=20)
 ```
 
 ---
@@ -279,7 +279,10 @@ self.push_message(
 **When you need it**: You want to access N.E.K.O's long-term memory (past conversations, remembered facts, etc.).
 
 ```python
-result = await self.memory.search("what topic did we discuss last time")
+from plugin.sdk.plugin import unwrap_or
+
+result = await self.memory.query("default", "what topic did we discuss last time")
+matches = unwrap_or(result, {})
 ```
 
 ---
@@ -289,7 +292,11 @@ result = await self.memory.search("what topic did we discuss last time")
 **When you need it**: You need to know about the current runtime environment.
 
 ```python
-info = await self.system_info.get()
+from plugin.sdk.plugin import unwrap_or
+
+config = unwrap_or(await self.system_info.get_system_config(), {})
+settings = unwrap_or(await self.system_info.get_server_settings(), {})
+python_env = unwrap_or(await self.system_info.get_python_env(), {})
 ```
 
 ---
@@ -305,7 +312,7 @@ info = await self.system_info.get()
 | `self.db` | SQLite database | `[plugin.database] enabled = true` |
 | `self.i18n` | Multi-language | `[plugin.i18n]` |
 | `self.data_path()` | Store files | No |
-| `self.bus` | Event pub/sub | No |
+| `self.bus` | Read bus snapshots | No |
 | `report_status()` | Show progress in panel | No |
 | `push_message()` | Push to chat | No |
 | `self.memory` | Access memory system | No |

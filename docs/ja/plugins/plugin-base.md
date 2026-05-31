@@ -227,19 +227,19 @@ content = cache_file.read_text()
 
 ---
 
-## self.bus — イベントバス
+## self.bus — バススナップショット
 
-**必要になる場面**: プラグイン同士を直接呼び出さず、疎結合にメッセージを渡したいとき。たとえば "note created" イベントを複数のプラグインが購読する場合です。
+**必要になる場面**: messages、events、lifecycle、conversations、memory など、名前空間ごとのバススナップショットを読みたいとき。
 
 ```python
-# Publish（このイベントを購読しているプラグインが受け取る）
-self.bus.emit("note_created", {"title": "New note", "id": 123})
+# 最近のイベントを読む
+recent_events = self.bus.events.get(event_type="note_created", limit=20)
 
-# Listen（通常は startup で登録する）
-self.bus.on("note_created", self._on_note_created)
+# 最近のメッセージを読む
+recent_messages = self.bus.messages.get(limit=20)
 
-async def _on_note_created(self, data):
-    self.logger.info("New note: {}", data["title"])
+# bucket 内のメモリレコードを読む
+memory_records = self.bus.memory.get(bucket_id="default", limit=20)
 ```
 
 ---
@@ -279,7 +279,10 @@ self.push_message(
 **必要になる場面**: N.E.K.O の長期記憶、過去の会話、記憶された事実などにアクセスしたいとき。
 
 ```python
-result = await self.memory.search("what topic did we discuss last time")
+from plugin.sdk.plugin import unwrap_or
+
+result = await self.memory.query("default", "what topic did we discuss last time")
+matches = unwrap_or(result, {})
 ```
 
 ---
@@ -289,7 +292,11 @@ result = await self.memory.search("what topic did we discuss last time")
 **必要になる場面**: 現在の実行環境について知りたいとき。
 
 ```python
-info = await self.system_info.get()
+from plugin.sdk.plugin import unwrap_or
+
+config = unwrap_or(await self.system_info.get_system_config(), {})
+settings = unwrap_or(await self.system_info.get_server_settings(), {})
+python_env = unwrap_or(await self.system_info.get_python_env(), {})
 ```
 
 ---
@@ -305,7 +312,7 @@ info = await self.system_info.get()
 | `self.db` | SQLite データベース | `[plugin.database] enabled = true` |
 | `self.i18n` | 多言語対応 | `[plugin.i18n]` |
 | `self.data_path()` | ファイル保存 | 不要 |
-| `self.bus` | イベント pub/sub | 不要 |
+| `self.bus` | バススナップショットを読む | 不要 |
 | `report_status()` | パネルに進捗表示 | 不要 |
 | `push_message()` | チャットへ送信 | 不要 |
 | `self.memory` | メモリシステムへアクセス | 不要 |

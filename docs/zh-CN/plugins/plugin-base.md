@@ -227,19 +227,19 @@ content = cache_file.read_text()
 
 ---
 
-## self.bus — 事件总线
+## self.bus — 总线快照
 
-**什么时候用**：你想在插件之间传递消息，但不想直接调用对方（松耦合）。比如"笔记创建了"这个事件，可能有多个插件想监听。
+**什么时候用**：你想读取按命名空间组织的总线快照，比如消息、事件、生命周期记录、会话和记忆记录。
 
 ```python
-# 发布事件（任何监听这个事件的插件都会收到）
-self.bus.emit("note_created", {"title": "新笔记", "id": 123})
+# 读取最近事件
+recent_events = self.bus.events.get(event_type="note_created", limit=20)
 
-# 监听事件（通常在 startup 中注册）
-self.bus.on("note_created", self._on_note_created)
+# 读取最近消息
+recent_messages = self.bus.messages.get(limit=20)
 
-async def _on_note_created(self, data):
-    self.logger.info("有新笔记: {}", data["title"])
+# 读取某个 bucket 的记忆记录
+memory_records = self.bus.memory.get(bucket_id="default", limit=20)
 ```
 
 ---
@@ -279,7 +279,10 @@ self.push_message(
 **什么时候用**：你想访问 N.E.K.O 的长期记忆（用户和 AI 的历史对话、记住的事情等）。
 
 ```python
-result = await self.memory.search("上次聊了什么话题")
+from plugin.sdk.plugin import unwrap_or
+
+result = await self.memory.query("default", "上次聊了什么话题")
+matches = unwrap_or(result, {})
 ```
 
 ---
@@ -289,7 +292,11 @@ result = await self.memory.search("上次聊了什么话题")
 **什么时候用**：你需要知道当前运行环境的信息。
 
 ```python
-info = await self.system_info.get()
+from plugin.sdk.plugin import unwrap_or
+
+config = unwrap_or(await self.system_info.get_system_config(), {})
+settings = unwrap_or(await self.system_info.get_server_settings(), {})
+python_env = unwrap_or(await self.system_info.get_python_env(), {})
 ```
 
 ---
@@ -305,7 +312,7 @@ info = await self.system_info.get()
 | `self.db` | SQLite 数据库 | `[plugin.database] enabled = true` |
 | `self.i18n` | 多语言 | `[plugin.i18n]` |
 | `self.data_path()` | 存放文件 | 不需要 |
-| `self.bus` | 事件发布/订阅 | 不需要 |
+| `self.bus` | 读取总线快照 | 不需要 |
 | `report_status()` | 面板中显示进度 | 不需要 |
 | `push_message()` | 向聊天推送消息 | 不需要 |
 | `self.memory` | 访问记忆系统 | 不需要 |
