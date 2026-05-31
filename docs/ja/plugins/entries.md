@@ -186,6 +186,12 @@ async def on_startup(self):
             handler=self._make_handler(cmd_info),
             name=cmd_info.get("name", cmd_id),
             description=cmd_info.get("description", ""),
+            input_schema=cmd_info.get("input_schema", {
+                "type": "object",
+                "properties": {
+                    "cmd": {"type": "string", "description": "Command input"},
+                },
+            }),
         )
 
     self.logger.info("Registered {} dynamic entries", len(commands))
@@ -198,7 +204,7 @@ def _make_handler(self, cmd_info):
     return handler
 ```
 
-動的エントリーも静的エントリーと同じように動きます。パネルに表示され、実行でき、AI からも呼び出せます。
+動的エントリーも静的エントリーと同じように動きます。パネルに表示され、実行でき、AI からも呼び出せます。handler がパラメーターを受け取る場合は、`input_schema` を明示的に渡してください。動的登録では handler のシグネチャから推論されません。
 
 削除するには `self.unregister_dynamic_entry(entry_id)` を使います。
 

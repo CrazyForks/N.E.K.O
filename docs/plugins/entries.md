@@ -184,6 +184,12 @@ async def on_startup(self):
             handler=self._make_handler(cmd_info),
             name=cmd_info.get("name", cmd_id),
             description=cmd_info.get("description", ""),
+            input_schema=cmd_info.get("input_schema", {
+                "type": "object",
+                "properties": {
+                    "cmd": {"type": "string", "description": "Command input"},
+                },
+            }),
         )
 
     self.logger.info("Registered {} dynamic entries", len(commands))
@@ -196,7 +202,7 @@ def _make_handler(self, cmd_info):
     return handler
 ```
 
-Dynamic entries work just like static ones — visible in the panel, executable, callable by the AI.
+Dynamic entries work just like static ones — visible in the panel, executable, callable by the AI. If the handler accepts parameters, pass `input_schema` explicitly; dynamic registration does not infer it from the handler signature.
 
 Use `self.unregister_dynamic_entry(entry_id)` to remove them.
 

@@ -184,6 +184,12 @@ async def on_startup(self):
             handler=self._make_handler(cmd_info),
             name=cmd_info.get("name", cmd_id),
             description=cmd_info.get("description", ""),
+            input_schema=cmd_info.get("input_schema", {
+                "type": "object",
+                "properties": {
+                    "cmd": {"type": "string", "description": "命令输入"},
+                },
+            }),
         )
 
     self.logger.info("注册了 {} 个动态入口", len(commands))
@@ -196,7 +202,7 @@ def _make_handler(self, cmd_info):
     return handler
 ```
 
-动态注册的入口和静态的一样——在面板中可见、可执行、可被 AI 调用。
+动态注册的入口和静态的一样——在面板中可见、可执行、可被 AI 调用。如果 handler 接收参数，需要显式传入 `input_schema`；动态注册不会从 handler 签名推导。
 
 用 `self.unregister_dynamic_entry(entry_id)` 可以移除。
 
