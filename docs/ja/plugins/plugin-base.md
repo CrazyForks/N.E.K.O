@@ -275,6 +275,8 @@ self.report_status({
 ```python
 self.push_message(
     source="smart_notes",
+    visibility=["chat"],
+    ai_behavior="blind",
     parts=[{"type": "text", "text": "Reminder: you have a pending task"}],
     priority=5,
 )

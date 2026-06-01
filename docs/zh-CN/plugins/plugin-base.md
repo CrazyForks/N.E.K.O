@@ -275,6 +275,8 @@ self.report_status({
 ```python
 self.push_message(
     source="smart_notes",
+    visibility=["chat"],
+    ai_behavior="blind",
     parts=[{"type": "text", "text": "提醒：你有一条待办事项要处理"}],
     priority=5,
 )
