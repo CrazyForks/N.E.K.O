@@ -241,13 +241,13 @@ content = cache_file.read_text()
 
 ```python
 # 读取最近事件
-recent_events = self.bus.events.get(filter={"type": "note_created"}, max_count=20)
+recent_events = await self.bus.events.get(filter={"type": "note_created"}, max_count=20)
 
 # 读取最近消息
-recent_messages = self.bus.messages.get(max_count=20)
+recent_messages = await self.bus.messages.get(max_count=20)
 
 # 读取某个 bucket 的记忆记录
-memory_records = self.bus.memory.get(bucket_id="default", limit=20)
+memory_records = await self.bus.memory.get(bucket_id="default", limit=20)
 ```
 
 ---
