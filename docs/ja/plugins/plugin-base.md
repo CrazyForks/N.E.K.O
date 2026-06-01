@@ -74,7 +74,7 @@ enabled = await self.config.get_bool("my_settings.enabled", default=True)
 await self.ctx.update_own_config({"my_settings": {"timeout": 60}})
 ```
 
-これは現在サポートされている host の更新経路を使います。変更が適用されたあと、`@lifecycle(id="config_change")` フックを定義していれば自動的に呼ばれます。
+これは現在サポートされている host の更新経路を使います。変更は保存され、`self.config` も更新されますが、プラグインプロセス内の `config_change` ライフサイクルフックは呼ばれません。新しい値がキャッシュ済みの派生状態に影響する場合は、`update_own_config()` が戻ったあとでその状態を明示的に再読み込みしてください。
 
 ---
 

@@ -74,7 +74,7 @@ enabled = await self.config.get_bool("my_settings.enabled", default=True)
 await self.ctx.update_own_config({"my_settings": {"timeout": 60}})
 ```
 
-This uses the supported host update path. If you've defined a `@lifecycle(id="config_change")` hook, it will be triggered automatically after the change is applied.
+This uses the supported host update path. It persists the change and refreshes `self.config`, but it does **not** dispatch the `config_change` lifecycle hook inside the plugin process. If the new value affects cached state, reload that state after `update_own_config()` returns.
 
 ---
 

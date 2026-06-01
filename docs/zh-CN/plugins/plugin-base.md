@@ -74,7 +74,7 @@ enabled = await self.config.get_bool("my_settings.enabled", default=True)
 await self.ctx.update_own_config({"my_settings": {"timeout": 60}})
 ```
 
-这会走当前支持的 host 更新路径。修改应用后，如果你定义了 `@lifecycle(id="config_change")` 钩子，它会被自动触发。
+这会走当前支持的 host 更新路径。它会持久化修改并刷新 `self.config`，但不会在插件进程内触发 `config_change` 生命周期钩子。如果新值会影响已缓存的派生状态，请在 `update_own_config()` 返回后主动重新加载这些状态。
 
 ---
 
