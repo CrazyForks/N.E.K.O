@@ -278,6 +278,12 @@ function createCompactToolWheelChargeState(): CompactToolWheelChargeState {
 
 type CompactMessagePreview = {
   messageId: string;
+  // Stable identity of the whole merged turn: the id of the earliest message
+  // folded into this preview. Unchanged as more bubbles stream into the same
+  // turn (messageId re-keys to the latest bubble, this does not), and changes
+  // when a genuinely new turn begins. Used to tell an appended bubble from a
+  // new turn without relying on text-prefix matching.
+  turnStartId: string;
   author: string;
   text: string;
   fullText: string;
@@ -420,6 +426,9 @@ function getCompactMessagePreview(messages: ChatMessage[]): CompactMessagePrevie
     let turnAuthor = '';
     const latestStreamingMessage = messages[latestStreamingAssistantIndex];
     const turnMessageId = String(latestStreamingMessage?.id || 'assistant-streaming');
+    // Walks backward to the earliest merged bubble, so the last assignment in
+    // the loop is the turn's anchor id.
+    let turnStartId = turnMessageId;
     let previousIncludedCreatedAt = typeof latestStreamingMessage?.createdAt === 'number'
       && Number.isFinite(latestStreamingMessage.createdAt)
       ? latestStreamingMessage.createdAt
@@ -443,6 +452,12 @@ function getCompactMessagePreview(messages: ChatMessage[]): CompactMessagePrevie
         }
         previousIncludedCreatedAt = createdAt;
       }
+      // Anchor the turn to every message folded in, before the empty-text skip.
+      // A bubble can be momentarily text-less (still streaming, image-only) then
+      // gain text; if the anchor only moved on text-bearing bubbles it would
+      // drift to a later bubble and back, re-keying the same turn as a new one
+      // and replaying the caption.
+      turnStartId = String(message.id || turnMessageId);
       const text = getMessageBlockPreviewText(message);
       if (!text) continue;
       turnTexts.unshift(text);
@@ -452,6 +467,7 @@ function getCompactMessagePreview(messages: ChatMessage[]): CompactMessagePrevie
       const turnText = normalizeCompactPreviewText(turnTexts.join(' '));
       return {
         messageId: turnMessageId || 'assistant-streaming',
+        turnStartId,
         author: turnAuthor,
         text: turnText,
         fullText: turnText,
@@ -471,6 +487,7 @@ function getCompactMessagePreview(messages: ChatMessage[]): CompactMessagePrevie
     const isStreamingAssistantMessage = message.role === 'assistant' && message.status === 'streaming';
     const preview = {
       messageId: message.id,
+      turnStartId: String(message.id),
       author: message.author,
       text: isStreamingAssistantMessage ? text : truncateCompactPreview(text, COMPACT_PREVIEW_MAX_LENGTH),
       fullText: text,
@@ -1188,6 +1205,12 @@ export default function App({
   const compactSpeechLastFrameTimeRef = useRef(0);
   const compactSpeechPreviewIdRef = useRef('');
   const compactSpeechPreviewTextRef = useRef('');
+  // Identity of the turn the speech reveal is currently walking through (the
+  // preview's turnStartId). Updated when the preview re-keys (messageId change),
+  // so it holds the *previous* turn's anchor at the moment a new bubble arrives
+  // — used to tell an appended bubble (same turn → keep revealing) from a
+  // brand-new turn (rewind to the start) without text-prefix guessing.
+  const compactSpeechRevealTurnIdRef = useRef('');
   const compactSpeechFallbackRevealRef = useRef(false);
   const compactSpeechFallbackTimerRef = useRef<number | null>(null);
   const isCompactSurfaceRef = useRef(false);
@@ -1767,13 +1790,38 @@ export default function App({
       window.clearTimeout(compactSpeechFallbackTimerRef.current);
       compactSpeechFallbackTimerRef.current = null;
     }
-    compactSpeechVisibleLengthRef.current = 0;
+    // Decouple the input-bar caption from per-bubble identity. The merged-turn
+    // preview is re-keyed to the latest streaming bubble's id, so every new
+    // bubble changes messageId even though it belongs to the same turn. While
+    // we're still inside that turn (same turnStartId), keep the revealed length
+    // so the caption continues appending instead of replaying the whole turn;
+    // only a genuinely new turn rewinds the reveal to the start. Keyed on the
+    // turn anchor rather than a text prefix, so two turns whose text happens to
+    // share a prefix can't be mistaken for a continuation.
+    const previousRevealTurnId = compactSpeechRevealTurnIdRef.current;
+    const nextRevealTurnId = compactPreviewIsStreaming ? (compactMessagePreview?.turnStartId || '') : '';
+    const continuesPreviousTurn = nextRevealTurnId.length > 0
+      && nextRevealTurnId === previousRevealTurnId;
+    const seedVisibleLength = continuesPreviousTurn
+      ? Math.min(compactSpeechVisibleLengthRef.current, compactPreviewText.length)
+      : 0;
+    // When the same turn continues, carry the fallback-reveal driver forward.
+    // Otherwise the appended text would freeze: the fallback timer re-arms but
+    // bails whenever visibleLength > 0 (the seeded length), so nothing would
+    // drive the reveal past the seed in the no-speech-playback path. Playback
+    // state is still reset to false so a finished bubble's audio can't snap the
+    // appended text to full — the next bubble's audio (or the carried fallback)
+    // resumes the reveal from the seed.
+    const keepFallbackReveal = continuesPreviousTurn && compactSpeechFallbackRevealRef.current;
+    compactSpeechRevealTurnIdRef.current = nextRevealTurnId;
+
+    compactSpeechVisibleLengthRef.current = seedVisibleLength;
     compactSpeechPlaybackStartedRef.current = false;
-    compactSpeechFallbackRevealRef.current = false;
+    compactSpeechFallbackRevealRef.current = keepFallbackReveal;
     compactSpeechRevealCarryRef.current = 0;
     compactSpeechLastFrameTimeRef.current = 0;
-    setCompactSpeechVisibleLength(0);
-    setCompactSpeechFallbackRevealActive(false);
+    setCompactSpeechVisibleLength(seedVisibleLength);
+    setCompactSpeechFallbackRevealActive(keepFallbackReveal);
   }, [compactMessagePreview?.messageId]);
 
   useEffect(() => {
@@ -1827,14 +1875,26 @@ export default function App({
         !isCompactSurfaceRef.current
         || compactSpeechPlaybackStartedRef.current
         || playbackHasStarted
-        || compactSpeechVisibleLengthRef.current > 0
+        // Bail when the reveal is already being driven or has finished — NOT
+        // merely when visibleLength > 0. A same-turn continuation seeds a
+        // nonzero prefix that may still be stalled (e.g. the previous bubble was
+        // revealed by speech, the appended bubble gets no playback/unavailable
+        // signal); the old `> 0` guard left that frozen. Let the timer engage so
+        // it reveals the appended text instead.
+        || compactSpeechFallbackRevealRef.current
+        || compactSpeechVisibleLengthRef.current >= compactPreviewText.length
       ) {
         return;
       }
       compactSpeechFallbackRevealRef.current = true;
       compactSpeechRevealCarryRef.current = 0;
       compactSpeechLastFrameTimeRef.current = 0;
-      compactSpeechVisibleLengthRef.current = Math.min(1, compactPreviewText.length);
+      // Resume from the already-seeded prefix (continuation) rather than rewinding
+      // to the first char; only an unseeded first bubble starts at 1.
+      compactSpeechVisibleLengthRef.current = Math.max(
+        compactSpeechVisibleLengthRef.current,
+        Math.min(1, compactPreviewText.length),
+      );
       setCompactSpeechVisibleLength(compactSpeechVisibleLengthRef.current);
       setCompactSpeechFallbackRevealActive(true);
     }, COMPACT_SPEECH_FALLBACK_REVEAL_DELAY_MS);
