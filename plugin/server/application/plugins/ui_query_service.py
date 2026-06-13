@@ -140,6 +140,11 @@ def _resolve_hosted_module_path(spec: str, importer_dir: Path, root: Path) -> Pa
     candidates: list[Path] = []
     if base.suffix:
         candidates.append(base)
+        # TS authors commonly write the ESM `./helper.js` form while the real
+        # source is `helper.ts`/`.tsx`; try the TS equivalents before giving up.
+        if base.suffix in {".js", ".jsx", ".mjs"}:
+            candidates.append(base.with_suffix(".ts"))
+            candidates.append(base.with_suffix(".tsx"))
     else:
         candidates.extend(base.with_suffix(suffix) for suffix in _HOSTED_MODULE_SUFFIXES)
         candidates.extend(base / f"index{suffix}" for suffix in _HOSTED_MODULE_SUFFIXES)

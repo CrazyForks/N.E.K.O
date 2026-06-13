@@ -368,5 +368,10 @@ def test_resolve_hosted_module_path_tries_suffixes_and_index(tmp_path) -> None:
     barrel = _resolve_hosted_module_path("./widgets", surfaces, root)
     assert barrel is not None and barrel.name == "index.tsx"
 
+    # A `./helper.js` ESM specifier resolves to the real `.ts`/`.tsx` source.
+    (surfaces / "helper.ts").write_text("export const y = 2\n", encoding="utf-8")
+    js_spec = _resolve_hosted_module_path("./helper.js", surfaces, root)
+    assert js_spec is not None and js_spec.name == "helper.ts"
+
     # Escaping the plugin root is rejected.
     assert _resolve_hosted_module_path("../../secret", surfaces, root) is None

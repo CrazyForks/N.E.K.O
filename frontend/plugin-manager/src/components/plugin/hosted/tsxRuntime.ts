@@ -112,13 +112,17 @@ function jsStringLiteral(value: string) {
 // specifiers against the importer and maps `@neko/plugin-ui` to the UI kit.
 function buildHostedModuleBody(options: BuildHostedTsxDocumentOptions) {
   const entryKey = options.entryModule || 'entry'
-  const defines = (options.modules || [])
+  // The entry is registered alongside its siblings so a sibling importing back
+  // into it (a valid ESM cycle) resolves to the same module record.
+  const defines = [
+    ...(options.modules || []),
+    { path: entryKey, source: options.source },
+  ]
     .map((module) => {
       const compiled = compileHostedTsxModule(module.source)
       return `__defineHostedModule(${jsStringLiteral(module.path)}, function(module, exports, require) {\n${compiled}\n});`
     })
     .join('\n')
-  const entryCompiled = compileHostedTsxModule(options.source)
 
   return `
     const __hostedModules = Object.create(null);
@@ -135,23 +139,26 @@ function buildHostedModuleBody(options: BuildHostedTsxDocumentOptions) {
       }
       return parts.join('/').replace(/\\.(tsx?|jsx?|mjs)$/, '');
     }
-    function __hostedRequire(importer, spec) {
-      if (spec === '@neko/plugin-ui' || spec === 'neko:ui') return window.NekoUiKit;
-      const key = __resolveHostedModule(importer, spec);
+    function __loadHostedModule(key) {
       const record = __hostedModules[key];
-      if (!record) throw new Error('Hosted module not found: ' + spec + ' (imported from ' + importer + ')');
+      if (!record) return null;
       if (!record.loaded) {
         record.loaded = true;
         record.factory(record.module, record.module.exports, function(s) { return __hostedRequire(key, s); });
       }
       return record.module.exports;
     }
+    function __hostedRequire(importer, spec) {
+      if (spec === '@neko/plugin-ui' || spec === 'neko:ui') return window.NekoUiKit;
+      const key = __resolveHostedModule(importer, spec);
+      // Mirror the backend's index.* fallback for directory-barrel imports.
+      if (key in __hostedModules) return __loadHostedModule(key);
+      if ((key + '/index') in __hostedModules) return __loadHostedModule(key + '/index');
+      throw new Error('Hosted module not found: ' + spec + ' (imported from ' + importer + ')');
+    }
 ${defines}
-    const __entryModule = { exports: {} };
-    (function(module, exports, require) {
-${entryCompiled}
-    })(__entryModule, __entryModule.exports, function(s) { return __hostedRequire(${jsStringLiteral(entryKey)}, s); });
-    const __Panel = (__entryModule.exports && (__entryModule.exports.default || __entryModule.exports.Panel)) || null;
+    const __entryExports = __loadHostedModule(${jsStringLiteral(entryKey)}) || {};
+    const __Panel = (__entryExports.default || __entryExports.Panel) || null;
 `
 }
 

@@ -267,6 +267,53 @@ describe('hosted TSX document runtime', () => {
     expect(root.querySelector('.badge')?.textContent).toBe('OK')
   })
 
+  it('resolves directory-barrel imports via the index fallback', () => {
+    const { root } = executeHostedDocument(
+      `
+        import { Page } from "@neko/plugin-ui"
+        import { label } from "./widgets"
+        export default function Panel() { return <Page title={label} /> }
+      `,
+      baseContext(),
+      baseContext(),
+      {
+        entryModule: 'surfaces/main',
+        // backend ships a directory barrel under its `index` key
+        modules: [{ path: 'surfaces/widgets/index', source: `export const label = "Barrel"` }],
+      },
+    )
+
+    expect(root.textContent).toContain('Barrel')
+  })
+
+  it('supports ESM cycles where a sibling imports back from the entry', () => {
+    const { root } = executeHostedDocument(
+      `
+        import { Page, Text } from "@neko/plugin-ui"
+        import { decorate } from "./helper"
+        export const PREFIX = ">> "
+        export default function Panel() { return <Page><Text>{decorate("hi")}</Text></Page> }
+      `,
+      baseContext(),
+      baseContext(),
+      {
+        entryModule: 'surfaces/main',
+        modules: [
+          {
+            path: 'surfaces/helper',
+            // imports back into the entry module — a valid cycle
+            source: `
+              import { PREFIX } from "./main"
+              export function decorate(s) { return PREFIX + s.toUpperCase() }
+            `,
+          },
+        ],
+      },
+    )
+
+    expect(root.textContent).toContain('>> HI')
+  })
+
   it('bridges api.call and api.refresh through parent postMessage', async () => {
     const { root, messages } = executeHostedDocument(`
       export default function Panel(props) {
