@@ -187,7 +187,10 @@ function hasDefaultExport(source) {
 function createCheckFile(entryPath, tempDir, index, surface, tomlPath) {
   const source = readFileSync(entryPath, 'utf8')
   const stripped = source
-    .replace(/^\s*import[\s\S]*?from\s+['"](?:@neko\/plugin-ui|neko:ui)['"]\s*;?\s*/gm, '')
+    // The `(?:(?!\bfrom\b)[\s\S])*?` guard lets a multi-line UI-kit import match
+    // without spanning past an adjacent sibling import's `from` (which a plain
+    // `[\s\S]*?` would swallow when semicolons are omitted, dropping the sibling).
+    .replace(/^\s*import\s+(?:(?!\bfrom\b)[\s\S])*?from\s+['"](?:@neko\/plugin-ui|neko:ui)['"]\s*;?\s*/gm, '')
     .replace(/^\s*import\s+['"](?:@neko\/plugin-ui|neko:ui)['"]\s*;?\s*/gm, '')
   // Mirror the entry's repo-relative layout into the temp dir (forcing a .tsx
   // suffix so .jsx surfaces still parse as TS) so sibling imports like

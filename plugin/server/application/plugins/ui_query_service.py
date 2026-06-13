@@ -109,46 +109,49 @@ def _hosted_plugin_not_running_message(locale: str | None) -> str:
 _HOSTED_MODULE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs")
 _HOSTED_MODULE_MAX_COUNT = 64
 _HOSTED_MODULE_MAX_TOTAL_BYTES = 512 * 1024
-_HOSTED_COMMENT_RE = None
-# The specifier is the first quoted string on an import/export statement line
-# (`import './x'`, `import X from './x'`, `export {y} from './x'`, or a
-# multi-line import's closing `} from './x'`).
-_HOSTED_SPEC_IN_LINE_RE = None
+_HOSTED_SCAN_RES = None
 
 
 def _hosted_scan_regexes():
-    global _HOSTED_COMMENT_RE, _HOSTED_SPEC_IN_LINE_RE
-    if _HOSTED_COMMENT_RE is None:
+    global _HOSTED_SCAN_RES
+    if _HOSTED_SCAN_RES is None:
         import re
 
-        _HOSTED_COMMENT_RE = re.compile(r"/\*.*?\*/|//[^\n]*", re.DOTALL)
-        _HOSTED_SPEC_IN_LINE_RE = re.compile(r"""['"]([^'"]+)['"]""")
-    return _HOSTED_COMMENT_RE, _HOSTED_SPEC_IN_LINE_RE
+        _HOSTED_SCAN_RES = {
+            "comment": re.compile(r"/\*.*?\*/|//[^\n]*", re.DOTALL),
+            # First quoted string on a statement line is the module specifier.
+            "spec": re.compile(r"""['"]([^'"]+)['"]"""),
+            # `import` not followed by an identifier char also matches the
+            # whitespace-less compact forms `import{x}from` / `import*as x`.
+            "import": re.compile(r"^import(?![\w$])"),
+            # Re-export (`export ... from` / `} from`) — a plain value export
+            # such as `export const x = "./y"` has no `from` and is skipped.
+            "reexport": re.compile(r"""^(?:export\b|\})[^'"]*\bfrom\b"""),
+            # Type-only edges are erased by Sucrase — not runtime dependencies.
+            "type_only": re.compile(r"^(?:import|export)\s+type\b"),
+        }
+    return _HOSTED_SCAN_RES
 
 
 def _iter_hosted_import_specs(text: str):
-    """Yield the module specifier of each import/export statement in *text*.
+    """Yield the module specifier of each runtime import/export statement.
 
     Line-anchored on purpose: only lines that begin with ``import``/``export``
     (or a multi-line import's closing ``} from``) are treated as statements, so
     an import-looking fragment inside a comment or string literal (e.g.
     ``const s = "import x from './scratch'"``) is not mistaken for a real
-    dependency. Comments are stripped first. The original source is still
-    shipped verbatim; this scan only drives dependency discovery.
+    dependency. ``import type`` / ``export type`` edges are skipped because the
+    runtime (Sucrase) erases them. Comments are stripped first; the original
+    source is still shipped verbatim — this scan only drives discovery.
     """
-    comment_re, spec_re = _hosted_scan_regexes()
-    for raw_line in comment_re.sub("", text).split("\n"):
+    res = _hosted_scan_regexes()
+    for raw_line in res["comment"].sub("", text).split("\n"):
         line = raw_line.strip()
-        # `import ...` (side-effect or `from`) is always a dependency; `export`
-        # and a multi-line continuation are only dependencies when they re-export
-        # `from '...'` — a plain `export const x = "./y"` is not an import.
-        is_import = line.startswith(("import ", "import'", 'import"'))
-        is_reexport_from = (
-            line.startswith(("export ", "export{", "export*", "} ", "}")) and " from " in line
-        )
-        if not (is_import or is_reexport_from):
+        if res["type_only"].match(line):
             continue
-        match = spec_re.search(line)
+        if not (res["import"].match(line) or res["reexport"].match(line)):
+            continue
+        match = res["spec"].search(line)
         if match:
             yield match.group(1)
 
@@ -167,12 +170,13 @@ def _resolve_hosted_module_path(spec: str, importer_dir: Path, root: Path) -> Pa
 
     candidates: list[Path] = []
     if base.suffix:
-        candidates.append(base)
         # TS authors commonly write the ESM `./helper.js` form while the real
-        # source is `helper.ts`/`.tsx`; try the TS equivalents before giving up.
+        # source is `helper.ts`/`.tsx`; prefer the TS sources (matching the
+        # checker's Bundler resolution) and fall back to the literal path.
         if base.suffix in {".js", ".jsx", ".mjs"}:
             candidates.append(base.with_suffix(".ts"))
             candidates.append(base.with_suffix(".tsx"))
+        candidates.append(base)
     else:
         candidates.extend(base.with_suffix(suffix) for suffix in _HOSTED_MODULE_SUFFIXES)
         candidates.extend(base / f"index{suffix}" for suffix in _HOSTED_MODULE_SUFFIXES)
@@ -222,8 +226,16 @@ def _collect_hosted_tsx_modules_sync(entry_path: Path, root: Path) -> list[dict[
             seen.add(resolved)
             try:
                 module_text = resolved.read_text(encoding="utf-8")
-            except (OSError, UnicodeError):
-                continue
+            except (OSError, UnicodeError) as exc:
+                # A resolved helper that exists but can't be read/decoded would
+                # otherwise be silently omitted, surfacing as a runtime "Hosted
+                # module not found"; fail closed with a deterministic error.
+                raise ServerDomainError(
+                    code="PLUGIN_UI_MODULE_UNREADABLE",
+                    message=f"hosted-tsx helper module could not be read: {spec}",
+                    status_code=500,
+                    details={"error_type": type(exc).__name__},
+                ) from exc
             total_bytes += len(module_text.encode("utf-8"))
             if len(modules) >= _HOSTED_MODULE_MAX_COUNT or total_bytes > _HOSTED_MODULE_MAX_TOTAL_BYTES:
                 # Fail closed: a truncated graph would silently omit modules and

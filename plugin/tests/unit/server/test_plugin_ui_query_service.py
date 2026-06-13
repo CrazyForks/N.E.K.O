@@ -355,6 +355,54 @@ def test_collect_hosted_modules_ignores_commented_and_quoted_imports(tmp_path) -
     assert modules == []
 
 
+def test_collect_hosted_modules_skips_type_only_follows_compact(tmp_path) -> None:
+    root = (tmp_path / "demo_plugin").resolve()
+    surfaces = root / "surfaces"
+    surfaces.mkdir(parents=True)
+    (surfaces / "types.ts").write_text("export type Schema = string\n", encoding="utf-8")
+    (surfaces / "compact.ts").write_text("export const v = 1\n", encoding="utf-8")
+    entry = surfaces / "panel.tsx"
+    entry.write_text(
+        "import type { Schema } from './types'\n"  # type-only — erased at runtime
+        "import{v}from './compact'\n"  # whitespace-less compact import — a real dep
+        "export default function Panel() { return null }\n",
+        encoding="utf-8",
+    )
+
+    modules = _collect_hosted_tsx_modules_sync(entry, root)
+
+    assert {m["path"] for m in modules} == {"surfaces/compact"}
+
+
+def test_resolve_hosted_module_prefers_ts_over_literal_js(tmp_path) -> None:
+    root = (tmp_path / "demo_plugin").resolve()
+    surfaces = root / "surfaces"
+    surfaces.mkdir(parents=True)
+    (surfaces / "helper.ts").write_text("export const x = 1\n", encoding="utf-8")
+    (surfaces / "helper.js").write_text("module.exports = {}\n", encoding="utf-8")
+
+    resolved = _resolve_hosted_module_path("./helper.js", surfaces, root)
+    assert resolved is not None and resolved.name == "helper.ts"
+
+
+def test_collect_hosted_modules_fails_closed_on_unreadable_helper(tmp_path) -> None:
+    root = (tmp_path / "demo_plugin").resolve()
+    surfaces = root / "surfaces"
+    surfaces.mkdir(parents=True)
+    # invalid UTF-8 helper — readable bytes but not decodable as the source
+    (surfaces / "broken.ts").write_bytes(b"\xff\xfe export const x = 1\n")
+    entry = surfaces / "panel.tsx"
+    entry.write_text(
+        "import { x } from './broken'\n"
+        "export default function Panel() { return null }\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ServerDomainError) as exc_info:
+        _collect_hosted_tsx_modules_sync(entry, root)
+    assert exc_info.value.code == "PLUGIN_UI_MODULE_UNREADABLE"
+
+
 def test_collect_hosted_modules_follows_reexports_not_value_exports(tmp_path) -> None:
     root = (tmp_path / "demo_plugin").resolve()
     surfaces = root / "surfaces"
