@@ -1794,7 +1794,7 @@ def qwen_realtime_tts_worker(request_queue, response_queue, audio_api_key, voice
         # Qwen realtime can produce 1-2s inter-chunk gaps. A small jitter buffer
         # gives the client enough queued PCM to ride over short upstream stalls.
         qwen_audio_bytes_per_second = 48000 * 2
-        qwen_initial_buffer_bytes = int(_parse_env_float("NEKO_QWEN_TTS_INITIAL_BUFFER_MS", 800, 0) / 1000 * qwen_audio_bytes_per_second)
+        qwen_initial_buffer_bytes = int(_parse_env_float("NEKO_QWEN_TTS_INITIAL_BUFFER_MS", 400, 0) / 1000 * qwen_audio_bytes_per_second)
         qwen_steady_buffer_bytes = int(_parse_env_float("NEKO_QWEN_TTS_STEADY_BUFFER_MS", 200, 0) / 1000 * qwen_audio_bytes_per_second)
 
         class QwenAudioJitterBuffer:
