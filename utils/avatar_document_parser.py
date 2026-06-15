@@ -128,15 +128,13 @@ def _parse_pdf(data: bytes) -> dict[str, Any]:
     if getattr(reader, "is_encrypted", False):
         raise AvatarDocumentParseError("encrypted_pdf_unsupported")
 
-    try:
-        total_pages = len(reader.pages)
-    except Exception:
-        total_pages = None
+    total_pages = _get_pdf_declared_page_count(reader)
     budget = _TextBudget()
     parts: list[str] = []
     seen_text_keys: set[str] = set()
     observed_pages = 0
-    for index, page in enumerate(reader.pages, start=1):
+    page_limit = MAX_PDF_PAGES if total_pages and total_pages > MAX_PDF_PAGES else MAX_PDF_PAGES + 1
+    for index, page in enumerate(_iter_pdf_pages_until(reader, page_limit), start=1):
         observed_pages = index
         if index > MAX_PDF_PAGES:
             budget.truncated = True
@@ -155,6 +153,81 @@ def _parse_pdf(data: bytes) -> dict[str, Any]:
         "truncated": budget.truncated,
         "meta": {"pages": total_pages if total_pages is not None else observed_pages},
     }
+
+
+def _get_pdf_declared_page_count(reader: Any) -> int | None:
+    try:
+        pages = _resolve_pdf_object(reader.root_object["/Pages"])
+        count = int(pages.get("/Count"))
+        return count if count >= 0 else None
+    except Exception:
+        return None
+
+
+def _iter_pdf_pages_until(reader: Any, limit: int) -> Any:
+    try:
+        from pypdf._page import PageObject
+        from pypdf.generic import DictionaryObject, IndirectObject, NameObject
+    except Exception as exc:  # pragma: no cover - pypdf import already checked by caller
+        raise AvatarDocumentParseError("pdf_parser_unavailable") from exc
+
+    inheritable_attrs = tuple(NameObject(name) for name in ("/Resources", "/MediaBox", "/CropBox", "/Rotate"))
+    emitted = 0
+
+    def object_key(reference: Any, resolved: Any) -> tuple[Any, ...]:
+        if isinstance(reference, IndirectObject):
+            return ("ref", reference.idnum, reference.generation)
+        return ("obj", id(resolved))
+
+    def walk(node_ref: Any, inherited: dict[Any, Any], seen_pages_nodes: set[tuple[Any, ...]]) -> Any:
+        nonlocal emitted
+        if emitted >= limit:
+            return
+        node = _resolve_pdf_object(node_ref)
+        if not isinstance(node, DictionaryObject):
+            raise AvatarDocumentParseError("invalid_pdf")
+
+        node_type = str(node.get("/Type", ""))
+        if not node_type:
+            node_type = "/Page" if "/Kids" not in node else "/Pages"
+
+        if node_type == "/Pages":
+            key = object_key(node_ref, node)
+            if key in seen_pages_nodes:
+                raise AvatarDocumentParseError("invalid_pdf")
+            next_seen = set(seen_pages_nodes)
+            next_seen.add(key)
+            next_inherited = dict(inherited)
+            for attr in inheritable_attrs:
+                if attr in node:
+                    next_inherited[attr] = node[attr]
+            kids = node.get("/Kids")
+            if kids is None:
+                raise AvatarDocumentParseError("invalid_pdf")
+            for child in kids:
+                yield from walk(child, next_inherited, next_seen)
+                if emitted >= limit:
+                    break
+        elif node_type == "/Page":
+            page = PageObject(reader, node_ref if isinstance(node_ref, IndirectObject) else None)
+            if not isinstance(node_ref, IndirectObject):
+                page.update(node)
+            for attr, value in inherited.items():
+                if attr not in page:
+                    page[attr] = value
+            emitted += 1
+            yield page
+        else:
+            raise AvatarDocumentParseError("invalid_pdf")
+
+    root_pages_ref = reader.root_object["/Pages"]
+    yield from walk(root_pages_ref, {}, set())
+
+
+def _resolve_pdf_object(value: Any) -> Any:
+    if hasattr(value, "get_object") and callable(value.get_object):
+        return value.get_object()
+    return value
 
 
 def _parse_docx(data: bytes) -> dict[str, Any]:

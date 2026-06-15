@@ -399,8 +399,11 @@ def test_marks_pdf_truncated_after_first_40_pages():
 def test_pdf_pages_are_not_materialized_before_limit():
     source = PARSER_SOURCE_PATH.read_text(encoding="utf-8")
 
+    assert "len(reader.pages)" not in source
     assert "list(reader.pages)" not in source
-    assert "for index, page in enumerate(reader.pages, start=1):" in source
+    assert "enumerate(reader.pages" not in source
+    assert "reader.pages[" not in source
+    assert "_iter_pdf_pages_until(reader, page_limit)" in source
 
 
 @pytest.mark.unit
