@@ -45,7 +45,7 @@ Convention (mirrors prompts_directives)
   tuning lives, not this lexicon.
 - Locale keys match the short-code scheme of ``NEGATIVE_KEYWORDS_I18N``
   (zh / en / ja / ko / ru / es / pt); ``zh`` is shared by zh-CN / zh-TW.
-"""
+"""  # noqa: DOCSTRING_CJK
 from __future__ import annotations
 
 

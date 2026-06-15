@@ -1590,7 +1590,7 @@ class LLMSessionManager:
             self.current_speech_id = str(uuid4())
 
     async def _focus_inline_decision(self, user_text: str) -> bool:
-        """Path A (inline) Focus 凝神 gate: score the just-arrived user message and
+        """Path A (inline) Focus gate: score the just-arrived user message and
         return whether THIS reply should run thinking-on.
 
         Scores via the shared ``FocusScorer`` (keyword + cadence + open-thread
@@ -1625,7 +1625,7 @@ class LLMSessionManager:
             return False
 
     async def _focus_idle_decision(self, snapshot) -> bool:
-        """Path B (idle) Focus 凝神 gate: score a silence window (no fresh user
+        """Path B (idle) Focus gate: score a silence window (no fresh user
         message) and return whether THIS proactive reply should run thinking-on.
 
         Idle-path signals are silence + open-thread (keyword/cadence need a

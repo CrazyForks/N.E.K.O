@@ -1,13 +1,15 @@
-"""Focus mode 凝神 v1 单测：迟滞状态机 + 信号评分器 + 词表扫描。
+"""Focus mode v1 unit tests: hysteresis state machine + signal scorer + lexicon scans.
 
-覆盖点：
-1. ``_focus_decide`` 纯迟滞函数：进入 / 维持 / 低分连续退出 / 硬顶退出 /
-   话题切换退出 / 进出阈值不对称（Schmitt）。
-2. ``FocusScorer``：keyword/cadence/silence/open_thread 子信号，inline vs
-   idle 路径的适用性与权重重归一，cadence 基线滚动。
-3. ``SessionStateMachine.update_focus``：异步进入/退出、FOCUS_EXIT 事件载荷、
-   reset 清态、总开关关闭时退化。
-4. ``prompts_focus`` 词表扫描：脆弱情绪计数、话题切换锚定、locale 兜底。
+Coverage:
+1. ``_focus_decide`` pure hysteresis: enter / stay / low-streak exit /
+   hard-cap exit / topic-switch exit / asymmetric (Schmitt) thresholds.
+2. ``FocusScorer``: keyword/cadence/silence/open_thread sub-signals, inline
+   vs idle path applicability + weight renormalisation, cadence baseline roll.
+3. ``SessionStateMachine.update_focus``: async enter/exit, FOCUS_EXIT payload,
+   reset clearing, master-switch-off degradation.
+4. ``prompts_focus`` lexicon scans: vulnerability count, topic-switch anchoring,
+   locale fallback.
+5. ``stream_text`` thinking-on threading (Path A wiring).
 """
 import os
 import sys

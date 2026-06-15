@@ -67,9 +67,9 @@ class CognitionMode(Enum):
 
     Orthogonal to ``TurnOwner`` / ``ProactivePhase`` (which track *who owns
     the turn*). ``REGULAR`` is the everyday 90% light-hearted baseline
-    (thinking globally disabled). ``FOCUS`` ("凝神") is the signal-triggered,
+    (thinking globally disabled). ``FOCUS`` is the signal-triggered,
     user-invisible "thinking-on + stronger model" state that delivers the
-    10% "神明降临" moment. ``TRUE_NAME`` ("真名") is the v2 destructive tier
+    10% "arrival" moment. ``TRUE_NAME`` is the v2 destructive tier
     (persona/memory rewrite + sub-model dispatch) — declared here for
     boundary clarity but not driven by any v1 transition.
     """
