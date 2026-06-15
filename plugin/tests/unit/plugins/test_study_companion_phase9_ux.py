@@ -293,6 +293,25 @@ def test_phase9_reply_renderer_keeps_currency_ranges_as_text() -> None:
     assert 'class="katex"' not in html
 
 
+@pytest.mark.parametrize("asset_name", ["katex-render.js", "math-parser.js"])
+def test_phase9_math_parser_keeps_currency_prose_before_bare_latex_as_text(asset_name: str) -> None:
+    parts = _split_math_with_node(asset_name, "Price is $20 and formula \\frac{1}{2}.")
+
+    assert parts == [
+        {"type": "text", "value": "Price is $20 and formula "},
+        {"type": "math", "value": "\\frac{1}{2}", "display": False},
+        {"type": "text", "value": "."},
+    ]
+
+
+def test_phase9_reply_renderer_keeps_currency_prose_before_bare_latex_as_text() -> None:
+    html = _render_reply_with_node("Price is $20 and formula \\frac{1}{2}.")
+
+    assert "Price is $20 and formula " in html
+    assert '<span class="katex" data-display="false">\\frac{1}{2}</span>' in html
+    assert "20 and formula \\frac" not in html
+
+
 def test_phase9_reply_renderer_does_not_swallow_markdown_after_bare_latex() -> None:
     html = _render_reply_with_node(
         "*   $8 \\\\times 1 = 8。\n"
