@@ -16,6 +16,7 @@ from utils.avatar_document_parser import (
 PARSER_SOURCE_PATH = Path(__file__).resolve().parents[2] / "utils" / "avatar_document_parser.py"
 CONTENT_TYPES_XML = '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>'
 WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 OFFICE_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
@@ -262,21 +263,27 @@ def test_deduplicates_nested_docx_paragraph_text():
 
 
 @pytest.mark.unit
-def test_deduplicates_repeated_docx_paragraphs_in_same_text_part():
-    repeated = "Steam GitHub B站 QQ群 Discord 渠道链接说明 " * 6
+def test_ignores_docx_alternate_content_fallback_text():
+    visible = "Steam: https://store.steampowered.com/app/4099310/__NEKO/"
     document_xml = _word_document_xml(
-        _word_paragraph_xml(repeated)
-        + _word_paragraph_xml(repeated)
+        f'<mc:AlternateContent xmlns:mc="{MC_NS}">'
+        "<mc:Choice Requires=\"wps\">"
+        f"{_word_paragraph_xml(visible)}"
+        "</mc:Choice>"
+        "<mc:Fallback>"
+        f"{_word_paragraph_xml(visible)}"
+        "</mc:Fallback>"
+        "</mc:AlternateContent>"
         + _word_paragraph_xml("后续新增的卡面图层与自定义贴纸说明")
     )
 
     parsed = parse_avatar_document(
-        "repeated-paragraphs.docx",
+        "alternate-content.docx",
         "",
         _docx_bytes("placeholder", {"word/document.xml": document_xml}),
     )
 
-    assert parsed["content"].count(repeated.strip()) == 1
+    assert parsed["content"].count(visible) == 1
     assert "后续新增的卡面图层与自定义贴纸说明" in parsed["content"]
 
 

@@ -24,7 +24,6 @@ MAX_XLSX_SHEETS = 12
 MAX_XLSX_ROWS_PER_SHEET = 800
 MAX_PPTX_SLIDES = 40
 MIN_DEDUP_TEXT_CHARS = 80
-MIN_DEDUP_UNIT_CHARS = 24
 
 
 class AvatarDocumentParseError(ValueError):
@@ -60,6 +59,7 @@ class _TextBudget:
 
 _WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+_MC_NS = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
 _REL_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 _SPREADSHEET_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _OFFICE_REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -331,10 +331,18 @@ def _docx_member_label(name: str) -> str:
 def _extract_word_text(xml_bytes: bytes) -> str:
     root = _parse_xml(xml_bytes)
     lines: list[str] = []
-    for paragraph in root.iter(_WORD_NS + "p"):
-        line = _extract_word_paragraph_text(paragraph).strip()
-        if line:
-            lines.append(line)
+
+    def walk(node: ET.Element) -> None:
+        if node.tag == _MC_NS + "Fallback":
+            return
+        if node.tag == _WORD_NS + "p":
+            line = _extract_word_paragraph_text(node).strip()
+            if line:
+                lines.append(line)
+        for child in node:
+            walk(child)
+
+    walk(root)
     return "\n".join(lines)
 
 
@@ -343,6 +351,8 @@ def _extract_word_paragraph_text(paragraph: ET.Element) -> str:
 
     def walk(node: ET.Element) -> None:
         for child in node:
+            if child.tag == _MC_NS + "Fallback":
+                continue
             if child.tag == _WORD_NS + "p":
                 continue
             if child.tag == _WORD_NS + "t" and child.text:
@@ -364,7 +374,7 @@ def _add_unique_text_part(
     label: str,
     text: str,
 ) -> None:
-    value = _dedupe_repeated_text_units(text)
+    value = _clean_text(text)
     if not value:
         return
     key = _text_dedup_key(value)
@@ -373,41 +383,6 @@ def _add_unique_text_part(
             return
         seen_text_keys.add(key)
     budget.add(parts, f"# {label}\n{value}" if label else value)
-
-
-def _dedupe_repeated_text_units(text: str) -> str:
-    value = _clean_text(text)
-    if not value:
-        return ""
-    lines = value.splitlines()
-    deduped: list[str] = []
-    seen_global_keys: set[str] = set()
-    previous_key = ""
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line:
-            previous_key = ""
-            if deduped and deduped[-1]:
-                deduped.append("")
-            continue
-        key = _text_unit_key(line)
-        if key and key == previous_key:
-            continue
-        if key and _should_dedupe_repeated_unit(key):
-            if key in seen_global_keys:
-                continue
-            seen_global_keys.add(key)
-        deduped.append(line)
-        previous_key = key
-    return _clean_text("\n".join(deduped))
-
-
-def _text_unit_key(text: str) -> str:
-    return re.sub(r"\s+", " ", _clean_text(text)).strip().casefold()
-
-
-def _should_dedupe_repeated_unit(key: str) -> bool:
-    return len(key) >= MIN_DEDUP_UNIT_CHARS or "://" in key or key.startswith("www.")
 
 
 def _text_dedup_key(text: str) -> str:
