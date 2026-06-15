@@ -1,5 +1,11 @@
 (function () {
   const CURRENCY_START_PATTERN = /^\$(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?(?:[A-Z]{2,4}|%)?(?=$|[\s)\],.;!?-])/;
+  const CURRENCY_LIKE_LATEX_PATTERN = /^\$(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?\s*(?:\\(?:times|cdot|frac|sqrt|lt|gt|le|ge|leq|geq)(?![A-Za-z])|[+\-*/=^_<>≤≥])/;
+  const BARE_LATEX_COMMAND_PATTERN = /\\(?:vec|overrightarrow|overline|bar|hat|frac|sqrt|sum|prod|int|lim|cdot|times|angle|sin|cos|tan|log|ln|infty|to|left|right|mathbf|mathbb|mathrm)(?![A-Za-z])/;
+  const DOUBLE_ESCAPED_LATEX_COMMAND_PATTERN = /\\\\(?=(?:vec|overrightarrow|overline|bar|hat|frac|sqrt|sum|prod|int|lim|cdot|times|angle|sin|cos|tan|log|ln|infty|to|left|right|mathbf|mathbb|mathrm)(?![A-Za-z]))/g;
+  const BARE_LATEX_SPAN_PATTERN = /\$[^\n。；;!?！？]*\\(?:vec|overrightarrow|overline|bar|hat|frac|sqrt|sum|prod|int|lim|cdot|times|angle|sin|cos|tan|log|ln|infty|to|left|right|mathbf|mathbb|mathrm)(?![A-Za-z])[^\n。；;!?！？]*|\|?\\(?:vec|overrightarrow|overline|bar|hat|frac|sqrt|sum|prod|int|lim|cdot|times|angle|sin|cos|tan|log|ln|infty|to|left|right|mathbf|mathbb|mathrm)(?![A-Za-z])(?:\[[^\]\n]{1,40}\]|\{[^{}\n]{1,120}\}|[A-Za-z0-9\\()+\-*/=.,:_|^\s]){0,180}/g;
+
+  const CJK_TEXT_PATTERN = /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/;
 
   function hasEscapedDelimiter(source, index) {
     let slashes = 0;
@@ -10,7 +16,8 @@
   }
 
   function isLikelyCurrencyStart(source, index) {
-    return CURRENCY_START_PATTERN.test(source.slice(index));
+    const tail = source.slice(index);
+    return CURRENCY_START_PATTERN.test(tail) && !CURRENCY_LIKE_LATEX_PATTERN.test(tail);
   }
 
   function findMathDelimiter(source, start, delimiter) {
@@ -24,13 +31,20 @@
         index = next + delimiter.length;
         continue;
       }
-      if (delimiter === '$' && source[next + 1] === '$') {
-        index = next + 2;
-        continue;
-      }
       return next;
     }
     return -1;
+  }
+
+  function isTrailingPunctuation(value) {
+    return !value || /^[\s.,;:!?，。；：！？)\]}、]/.test(value);
+  }
+
+  function inlineCloseLength(source, closeIndex) {
+    if (source[closeIndex + 1] === '$' && isTrailingPunctuation(source.slice(closeIndex + 2))) {
+      return 2;
+    }
+    return 1;
   }
 
   function findBackslashMathDelimiter(source, start, closeChar) {
@@ -49,9 +63,99 @@
     return -1;
   }
 
+  function hasMathSyntax(source) {
+    return (
+      source.includes('$')
+      || source.includes('\\(')
+      || source.includes('\\[')
+      || BARE_LATEX_COMMAND_PATTERN.test(source)
+    );
+  }
+
+  function normalizeBareLatexMatch(raw) {
+    let value = String(raw || '');
+    let consumeLength = value.length;
+    if (value.startsWith('$')) {
+      if (value.slice(1).includes('$')) {
+        return null;
+      }
+      value = value.slice(1);
+      consumeLength -= 1;
+    }
+    const leading = value.match(/^\s+/);
+    if (leading) {
+      value = value.slice(leading[0].length);
+      consumeLength -= leading[0].length;
+    }
+    const trailing = value.match(/\s+$/);
+    if (trailing) {
+      value = value.slice(0, -trailing[0].length);
+      consumeLength -= trailing[0].length;
+    }
+    const proseTail = value.match(/\s+[A-Za-z]{2,}(?:\s+[A-Za-z]{2,})*$/);
+    if (proseTail) {
+      value = value.slice(0, -proseTail[0].length);
+      consumeLength -= proseTail[0].length;
+    }
+    if (
+      !value
+      || value.includes('$$')
+      || value.includes('**')
+      || /[\n#]/.test(value)
+      || !BARE_LATEX_COMMAND_PATTERN.test(value)
+    ) {
+      return null;
+    }
+    return { value, consumeLength: Math.max(1, consumeLength + (raw.startsWith('$') ? 1 : 0)) };
+  }
+
+  function isLikelyInlineMathValue(raw) {
+    const value = String(raw || '').trim();
+    if (
+      !value
+      || value.includes('$$')
+      || value.includes('**')
+      || /[\n#]/.test(value)
+    ) {
+      return false;
+    }
+    if (CJK_TEXT_PATTERN.test(value) && !/\\(?:text|mathrm|operatorname)(?![A-Za-z])/.test(value)) {
+      return false;
+    }
+    return (
+      BARE_LATEX_COMMAND_PATTERN.test(value)
+      || /[A-Za-z0-9]/.test(value)
+      || /[=+\-*/^_|()[\]{},.]/.test(value)
+    );
+  }
+
+  function pushTextParts(parts, value) {
+    const source = String(value || '');
+    if (!source) {
+      return;
+    }
+    let last = 0;
+    for (const match of source.matchAll(BARE_LATEX_SPAN_PATTERN)) {
+      const raw = match[0] || '';
+      const start = match.index || 0;
+      const normalized = normalizeBareLatexMatch(raw);
+      if (!normalized) {
+        continue;
+      }
+      if (start > last) {
+        parts.push({ type: 'text', value: source.slice(last, start) });
+      }
+      parts.push({ type: 'math', value: normalized.value, display: false });
+      last = start + normalized.consumeLength;
+    }
+    if (last < source.length) {
+      parts.push({ type: 'text', value: source.slice(last) });
+    }
+  }
+
   function splitByMath(text) {
     const parts = [];
-    const source = String(text || '');
+    const source = String(text || '').replace(/\\\$\\\$/g, () => '$$').replace(/\\\$\$/g, () => '$$');
     let last = 0;
     let index = 0;
     while (index < source.length) {
@@ -67,7 +171,7 @@
             continue;
           }
           if (index > last) {
-            parts.push({ type: 'text', value: source.slice(last, index) });
+            pushTextParts(parts, source.slice(last, index));
           }
           const mathValue = source.slice(index + 2, closer).trim();
           if (mathValue) {
@@ -93,7 +197,7 @@
           continue;
         }
         if (index > last) {
-          parts.push({ type: 'text', value: source.slice(last, index) });
+          pushTextParts(parts, source.slice(last, index));
         }
         parts.push({
           type: 'math',
@@ -115,25 +219,30 @@
         continue;
       }
       if (index > last) {
-        parts.push({ type: 'text', value: source.slice(last, index) });
+        pushTextParts(parts, source.slice(last, index));
       }
       const mathValue = source.slice(index + 1, inlineCloser).trim();
-      if (mathValue) {
+      if (mathValue && isLikelyInlineMathValue(mathValue)) {
         parts.push({ type: 'math', value: mathValue, display: false });
+        const closeLength = inlineCloseLength(source, inlineCloser);
+        index = inlineCloser + closeLength;
       } else {
         parts.push({ type: 'text', value: source.slice(index, inlineCloser + 1) });
+        index = inlineCloser + 1;
       }
-      index = inlineCloser + 1;
       last = index;
     }
     if (last < source.length) {
-      parts.push({ type: 'text', value: source.slice(last) });
+      pushTextParts(parts, source.slice(last));
     }
     return parts;
   }
 
   function normalizeLatexForKatex(value) {
-    return String(value || '').replace(/</g, '\\lt ').replace(/>/g, '\\gt ');
+    return String(value || '')
+      .replace(DOUBLE_ESCAPED_LATEX_COMMAND_PATTERN, '\\')
+      .replace(/</g, '\\lt ')
+      .replace(/>/g, '\\gt ');
   }
 
   window.__studyCompanionMathParser = {
@@ -142,7 +251,9 @@
     isLikelyCurrencyStart,
     findMathDelimiter,
     findBackslashMathDelimiter,
+    hasMathSyntax,
     splitByMath,
+    isLikelyInlineMathValue,
     normalizeLatexForKatex,
   };
 })();
