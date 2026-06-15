@@ -69,6 +69,7 @@ from main_logic.agent_event_bus import (
     publish_voice_transcript_observed_best_effort,
 )
 from utils.preferences import load_global_conversation_settings, aload_global_conversation_settings
+import config
 from config import (
     MEMORY_SERVER_PORT,
     TOOL_SERVER_PORT,
@@ -76,8 +77,10 @@ from config import (
     SESSION_TURN_THRESHOLD,
     AVATAR_INTERACTION_DEDUPE_MAX_ITEMS,
     HIDE_DIRTY_VOICE_TRANSCRIPTS,
-    FOCUS_MODE_ENABLED,
 )
+# NOTE: FOCUS_MODE_ENABLED is read live via ``config.FOCUS_MODE_ENABLED`` at the
+# gate (not imported by value), so a runtime toggle / test monkeypatch of the
+# flag takes effect — consistent with how the SM/scorer read the other knobs.
 from config.prompts.prompts_sys import (
     _loc,
     SESSION_INIT_PROMPT, SESSION_INIT_PROMPT_AGENT,
@@ -1600,7 +1603,7 @@ class LLMSessionManager:
         never blocks the user reply. Returns False fast when the master switch
         is off (skips the snapshot cost).
         """
-        if not FOCUS_MODE_ENABLED:
+        if not config.FOCUS_MODE_ENABLED:
             return False
         if not (user_text and user_text.strip()):
             return False
@@ -1623,10 +1626,9 @@ class LLMSessionManager:
                 if self.state.mode is CognitionMode.FOCUS:
                     await self.state.update_focus(0.0, topic_changed=True)
                 return False
-            lang = self.user_language or 'zh'
             snapshot = await self._activity_tracker.get_snapshot()
             scored = self._focus_scorer.score(snapshot, user_text=user_text)
-            topic_changed = detect_topic_switch(user_text, lang)
+            topic_changed = detect_topic_switch(user_text)
             mode = await self.state.update_focus(
                 scored.score, topic_changed=topic_changed,
             )
@@ -1656,7 +1658,17 @@ class LLMSessionManager:
         — the cross-path interaction is a known knob (see
         docs/design/focus-truename-mode.md).
         """
-        if not FOCUS_MODE_ENABLED or snapshot is None:
+        if not config.FOCUS_MODE_ENABLED:
+            return False
+        if snapshot is None:
+            # Privacy mode / tracker unavailable: don't score, but cleanly exit
+            # any active Focus so an episode can't stay stuck in FOCUS across a
+            # privacy window (mirrors the inline privacy path).
+            try:
+                if self.state.mode is CognitionMode.FOCUS:
+                    await self.state.update_focus(0.0, topic_changed=True)
+            except Exception:
+                pass
             return False
         try:
             scored = self._focus_scorer.score(snapshot, user_text=None)

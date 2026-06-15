@@ -283,10 +283,13 @@ def test_vulnerability_cross_locale_mixed_language():
 
 
 def test_topic_switch_anchored_at_start():
-    assert detect_topic_switch("对了，今天天气怎么样", "zh") is True
-    assert detect_topic_switch("by the way, did you eat", "en") is True
+    assert detect_topic_switch("对了，今天天气怎么样") is True
+    assert detect_topic_switch("by the way, did you eat") is True
+    # cross-locale: an EN pivot is detected even though no lang is passed
+    # (and vice-versa) — mixed-language users pivot in either tongue.
+    assert detect_topic_switch("btw 你吃了吗") is True
     # marker buried mid-sentence is not a pivot
-    assert detect_topic_switch("我觉得对了这个想法不错", "zh") is False
+    assert detect_topic_switch("我觉得对了这个想法不错") is False
 
 
 # ── 5. stream_text thinking-on threading (Path A wiring) ────────────

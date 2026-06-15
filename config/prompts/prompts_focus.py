@@ -259,22 +259,25 @@ def scan_vulnerability_keywords(message: str) -> int:
     return len(matched)
 
 
-def detect_topic_switch(message: str, lang: str = "zh") -> bool:
-    """True if *message* opens with an explicit topic-switch marker.
+def detect_topic_switch(message: str) -> bool:
+    """True if *message* opens with an explicit topic-switch marker, ANY locale.
 
     Match is anchored to the message start (after stripping leading
     whitespace / punctuation) — a marker mid-sentence is usually
-    incidental. Language handling mirrors ``scan_vulnerability_keywords``
-    (region suffix stripped, unknown ⇒ ``zh``).
+    incidental, and the start-anchor keeps cross-locale scanning low-risk
+    (markers are distinctive multi-char phrases). Language-agnostic for the
+    same mixed-language reason as ``scan_vulnerability_keywords``: a
+    bilingual user may pivot in either tongue regardless of the UI language.
     """
     if not message:
         return False
-    short = (lang or "").strip().lower().split('-', 1)[0].split('_', 1)[0]
-    markers = FOCUS_TOPIC_SWITCH_MARKERS_I18N.get(
-        short, FOCUS_TOPIC_SWITCH_MARKERS_I18N["zh"],
-    )
     head = message.strip().lstrip("，,。.！!？?、…—-—— \t").lower()
-    return any(head.startswith(m.lower()) for m in markers)
+    if not head:
+        return False
+    for markers in FOCUS_TOPIC_SWITCH_MARKERS_I18N.values():
+        if any(head.startswith(m.lower()) for m in markers):
+            return True
+    return False
 
 
 __all__ = [

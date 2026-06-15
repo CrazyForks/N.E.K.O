@@ -1708,17 +1708,20 @@ class OmniOfflineClient:
         return summary
 
     @staticmethod
-    def _focus_stream_overrides(thinking_on: bool, has_images: bool) -> dict:
+    def _focus_stream_overrides(thinking_on: bool, uses_vision: bool) -> dict:
         """Per-call streaming overrides for a Focus turn.
 
         Returns ``{"extra_body": None}`` (drop the thinking-off body → reason
-        freely) only when ``thinking_on`` AND there are no pending images;
-        otherwise ``{}`` (instance default, thinking off). The vision guard
-        mirrors the proactive Phase-2 rule: a vision model + thinking reliably
-        times out (see ``main_routers/system_router.py`` Phase-2 note), so a
-        focus turn carrying images must stay thinking-off.
+        freely) only when ``thinking_on`` AND the turn does not use a vision
+        model; otherwise ``{}`` (instance default, thinking off). The vision
+        guard mirrors the proactive Phase-2 rule: a vision model + thinking
+        reliably times out (see ``main_routers/system_router.py`` Phase-2
+        note). ``uses_vision`` must be True both when this turn carries images
+        AND when the session has already switched to the vision model
+        permanently (image data persists in history, so ``self.model`` stays
+        the vision model on later text-only turns).
         """
-        return {"extra_body": None} if (thinking_on and not has_images) else {}
+        return {"extra_body": None} if (thinking_on and not uses_vision) else {}
 
     async def stream_text(
         self, text: str, *, system_prefix: str | None = None,
@@ -1959,7 +1962,13 @@ class OmniOfflineClient:
                         # instance's thinking-off extra_body applies. Routed
                         # through the visible (tool-leak-filtered) variant,
                         # which forwards **overrides to ``_astream_with_tools``.
-                        _focus_overrides = self._focus_stream_overrides(thinking_on, has_images)
+                        # uses_vision covers both this turn's images AND a prior
+                        # permanent switch to the vision model (self.model stays
+                        # vision once image data is in history).
+                        _uses_vision = has_images or bool(
+                            self.vision_model and self.model == self.vision_model
+                        )
+                        _focus_overrides = self._focus_stream_overrides(thinking_on, _uses_vision)
                         async for chunk in self._astream_visible_with_tools(
                             self._conversation_history, **_focus_overrides,
                         ):
