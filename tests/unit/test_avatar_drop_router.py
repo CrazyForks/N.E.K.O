@@ -42,6 +42,27 @@ def test_parse_document_endpoint_returns_text_item_for_supported_document():
 
 
 @pytest.mark.unit
+def test_parse_document_endpoint_preserves_extension_after_filename_truncation():
+    response = _client().post(
+        "/api/avatar-drop/parse-document",
+        files={
+            "file": (
+                ("a" * 180) + ".docx",
+                _docx_bytes("Long name hello"),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    item = response.json()["item"]
+    assert len(item["name"]) == 160
+    assert item["name"].endswith(".docx")
+    assert item["documentType"] == "docx"
+    assert "Long name hello" in item["content"]
+
+
+@pytest.mark.unit
 def test_parse_document_endpoint_surfaces_parser_error_code():
     response = _client().post(
         "/api/avatar-drop/parse-document",

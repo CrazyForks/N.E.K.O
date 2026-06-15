@@ -99,6 +99,19 @@ def _many_pptx_bytes(slide_count: int) -> bytes:
     return _zip_bytes(members)
 
 
+def _many_pptx_notes_bytes(note_count: int) -> bytes:
+    members: dict[str, str | bytes] = {
+        "[Content_Types].xml": CONTENT_TYPES_XML,
+        "ppt/presentation.xml": "<p:presentation xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\"/>",
+        "ppt/slides/slide1.xml": f'<p:sld xmlns:p="p" xmlns:a="{DRAWING_NS}"><a:t>Slide body</a:t></p:sld>',
+    }
+    for index in range(1, note_count + 1):
+        members[f"ppt/notesSlides/notesSlide{index}.xml"] = (
+            f'<p:notes xmlns:p="p" xmlns:a="{DRAWING_NS}"><a:t>Notes body {index}</a:t></p:notes>'
+        )
+    return _zip_bytes(members)
+
+
 def _pdf_bytes(text: str = "Hello PDF") -> bytes:
     stream = f"BT /F1 24 Tf 72 720 Td ({text}) Tj ET".encode("ascii")
     objects = [
@@ -306,3 +319,16 @@ def test_marks_pptx_truncated_after_first_40_slides():
     assert "Slide body 40" in parsed["content"]
     assert "# Slide 41" not in parsed["content"]
     assert "Slide body 41" not in parsed["content"]
+
+
+@pytest.mark.unit
+def test_marks_pptx_truncated_after_first_40_notes():
+    parsed = parse_avatar_document("many-notes.pptx", "", _many_pptx_notes_bytes(41))
+
+    assert parsed["document_type"] == "pptx"
+    assert parsed["meta"]["slides"] == 1
+    assert parsed["truncated"] is True
+    assert "# Notes 40" in parsed["content"]
+    assert "Notes body 40" in parsed["content"]
+    assert "# Notes 41" not in parsed["content"]
+    assert "Notes body 41" not in parsed["content"]

@@ -233,6 +233,8 @@ def _parse_pptx(data: bytes) -> dict[str, Any]:
             text = _extract_drawing_text(_read_xml_member(archive, name))
             if text:
                 budget.add(parts, f"# Notes {index}\n{text}")
+        if len(note_names) > MAX_PPTX_SLIDES:
+            budget.truncated = True
         return {
             "content": "\n\n".join(parts),
             "truncated": budget.truncated,

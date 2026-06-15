@@ -23,7 +23,16 @@ router = APIRouter(prefix="/api/avatar-drop", tags=["avatar-drop"])
 def _safe_filename(value: str) -> str:
     name = re.sub(r"[\x00-\x1f\x7f<>]+", "", str(value or "")).strip()
     name = re.sub(r"\s+", " ", name)
-    return name[:160] or "document"
+    if not name:
+        return "document"
+    if len(name) <= 160:
+        return name
+    suffix_match = re.search(r"(\.[A-Za-z0-9]{1,16})$", name)
+    if not suffix_match:
+        return name[:160]
+    suffix = suffix_match.group(1)
+    stem = name[: 160 - len(suffix)].rstrip(" .")
+    return (stem or "document") + suffix
 
 
 async def _read_upload_limited(file: UploadFile) -> bytes:
