@@ -92,12 +92,25 @@ def test_avatar_drop_parser_declares_supported_formats_and_limits():
 @pytest.mark.unit
 def test_avatar_drop_intake_hides_bubble_when_drag_leaves_model_hit_area():
     source = _read(INTAKE_PATH)
+    chat_surface_target = _js_function_block(source, "isChatSurfaceDropTarget")
     get_event_target = _js_function_block(source, "getEventTarget")
     drag_over = _js_function_block(source, "handleDragOver")
     drop = _js_function_block(source, "handleDrop")
     hide_overlay = _js_function_block(source, "hideOverlay")
     hide_overlay_now = _js_function_block(source, "hideOverlayNow")
 
+    assert "document.getElementById('react-chat-window-shell')" in chat_surface_target
+    assert "document.getElementById('text-input-area')" in chat_surface_target
+    assert "document.getElementById('textInputBox')" in chat_surface_target
+    assert "'.composer-panel'" in chat_surface_target
+    assert "'.composer-input-shell'" in chat_surface_target
+    assert "'[data-compact-geometry-owner=\"surface\"]'" in chat_surface_target
+    assert "isChatSurfaceDropTarget(event)" in get_event_target
+    assert get_event_target.index("isChatSurfaceDropTarget(event)") < get_event_target.index("getDropTargetAtPoint")
+    assert "if (isChatSurfaceDropTarget(event))" in drag_over
+    assert drag_over.index("if (isChatSurfaceDropTarget(event))") < drag_over.index("if (busy)")
+    assert "if (isChatSurfaceDropTarget(event))" in drop
+    assert drop.index("if (isChatSurfaceDropTarget(event))") < drop.index("if (busy)")
     assert "options.allowRecentTarget === true" in get_event_target
     assert "Date.now() - lastTargetAt < 180" in get_event_target
     assert "if (busy)" in drag_over

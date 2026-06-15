@@ -183,6 +183,42 @@
         return { type: target.type, rect: hitRect, visualRect: target.rect };
     }
 
+    function getTargetElement(target) {
+        if (!target) return null;
+        if (target.nodeType === 1) return target;
+        return target.parentElement || null;
+    }
+
+    function isChatSurfaceDropTarget(event) {
+        if (!event || !dataTransferHasFiles(event.dataTransfer)) return false;
+        var targetElement = getTargetElement(event.target);
+        if (!targetElement) return false;
+
+        var shell = document.getElementById('react-chat-window-shell');
+        if (shell && shell.contains(targetElement)) return true;
+        var inputArea = document.getElementById('text-input-area');
+        if (inputArea && inputArea.contains(targetElement)) return true;
+        var textInput = document.getElementById('textInputBox');
+        if (textInput && textInput.contains(targetElement)) return true;
+
+        if (typeof targetElement.closest !== 'function') return false;
+        return !!targetElement.closest([
+            '#react-chat-window-root',
+            '#react-chat-window-shell',
+            '#text-input-area',
+            '#textInputBox',
+            '#screenshot-thumbnail-container',
+            '#screenshots-list',
+            '.compact-chat-surface-frame',
+            '.compact-chat-surface-shell',
+            '.composer-panel',
+            '.composer-input-shell',
+            '.composer-input',
+            '.composer-attachments',
+            '[data-compact-geometry-owner="surface"]'
+        ].join(', '));
+    }
+
     function ensureStyle() {
         if (document.getElementById(STYLE_ID)) return;
         var style = document.createElement('style');
@@ -340,6 +376,7 @@
     function getEventTarget(event, options) {
         options = options || {};
         if (!event || !dataTransferHasFiles(event.dataTransfer)) return null;
+        if (isChatSurfaceDropTarget(event)) return null;
         var target = getDropTargetAtPoint(event.clientX, event.clientY);
         if (target) {
             activeTarget = target;
@@ -353,6 +390,10 @@
     }
 
     function handleDragOver(event) {
+        if (isChatSurfaceDropTarget(event)) {
+            hideOverlay(0);
+            return;
+        }
         if (busy) {
             if (event && dataTransferHasFiles(event.dataTransfer)) {
                 event.preventDefault();
@@ -378,6 +419,10 @@
     }
 
     async function handleDrop(event) {
+        if (isChatSurfaceDropTarget(event)) {
+            hideOverlay(0);
+            return;
+        }
         if (busy) {
             if (event && dataTransferHasFiles(event.dataTransfer)) {
                 event.preventDefault();
