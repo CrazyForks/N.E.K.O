@@ -3143,15 +3143,18 @@ class ConfigManager:
         Dual to :func:`is_saveable_native_voice` but for the unified provider
         registry: a hosted/local provider's presets are only saveable while that
         provider is the one dispatch would route to, so this gates on the same
-        selection the dispatcher uses. The hosted providers are registered by
-        ``main_logic.tts_client`` (the heavy worker module); we force-import it so
-        the registry is populated, mirroring ``config_router``'s ui_metadata site.
-        Any failure (missing optional deps in a stripped env, etc.) degrades to
-        "not a preset voice" rather than breaking validation.
+        selection the dispatcher uses.
+
+        The hosted providers are registered as a side effect of importing
+        ``main_logic.tts_client``. config_manager (utils layer) must NOT import it
+        — that's a CI-enforced layer inversion (utils → main_logic). We rely on the
+        running app having imported tts_client at startup (the TTS pipeline does),
+        so the registry is populated by the time any voice is validated; if it
+        isn't (or the lookup errors), this degrades to "not a preset voice" rather
+        than breaking validation.
         """
         try:
             from utils import tts_provider_registry
-            import main_logic.tts_client  # noqa: F401  确保 hosted provider 已注册
             return tts_provider_registry.is_selected_preset_voice(
                 self.get_core_config() or {}, self, voice_id
             )
