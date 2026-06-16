@@ -3312,12 +3312,34 @@ class ConfigManager:
                 return str(vdata.get('provider') or '')
             return None
 
+        def _hosted_preset_provider(ref):
+            """Selected hosted/local provider key when ``ref`` is one of its preset
+            voices (e.g. MiMo's "Milo"), else None — so the structured object keeps
+            the ``source=preset / provider=<key>`` ownership the flat string drops.
+
+            Dual to :meth:`_is_selected_hosted_preset_voice` (used by validate); both
+            gate on tts_provider_registry's selection so a hosted preset is only
+            recognized while that provider is the one dispatch would route to. Same
+            layer rule: config_manager (utils) must NOT import main_logic, so we only
+            query the same-layer registry, which the running app populates by
+            importing main_logic.tts_client at startup. Degrades to None on error.
+            """
+            try:
+                from utils import tts_provider_registry
+                core = self.get_core_config() or {}
+                if tts_provider_registry.is_selected_preset_voice(core, self, ref):
+                    return tts_provider_registry.selected_provider_key(core, self)
+            except Exception:
+                logger.warning("hosted preset voice 归一化异常，按非预制处理", exc_info=True)
+            return None
+
         return normalize_voice_id(
             voice_id,
             vllm_selected=self._is_vllm_omni_tts_selected(self.get_core_config()),
             clone_provider_lookup=_clone_lookup,
             is_native=lambda ref: is_saveable_native_voice(self, ref),
             native_provider=get_active_realtime_native_provider(self) or '',
+            hosted_preset_provider=_hosted_preset_provider,
             free_voice_ids=set(get_free_voices().values()),
         )
 
