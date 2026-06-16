@@ -780,6 +780,25 @@ def _get_active_native_preview_provider(config_manager, voice_id: object) -> str
     return None
 
 
+def _is_unpreviewable_selected_preset_voice(config_manager, core_config, voice_id, voice_data) -> bool:
+    """Whether voice_id is a built-in preset of the currently selected hosted/local
+    provider (e.g. MiMo) that has no dedicated preview path yet — and is NOT a user clone.
+
+    A cloned voice whose id collides with a preset name must still preview through its
+    clone path: runtime dispatch selects clone providers (priority 30/40/50) ahead of a
+    static-catalog provider like MiMo (60), so the clone wins. Any id present in a voice
+    storage bucket is therefore never treated as an unpreviewable preset (dual to the
+    native-preview collision guard, which passes voice_id_exists_in_any_storage)."""
+    if voice_data:
+        return False
+    try:
+        if config_manager.voice_id_exists_in_any_storage(voice_id):
+            return False
+    except Exception:
+        pass
+    return tts_provider_registry.is_selected_preset_voice(core_config or {}, config_manager, voice_id)
+
+
 def _read_wav_payload(audio_bytes: bytes) -> tuple[bytes, int, int, int]:
     """Read the WAV returned by upstream; returns PCM plus channel count, sample width and sample rate."""
     with io.BytesIO(audio_bytes) as wav_io:
@@ -4353,9 +4372,10 @@ async def get_voice_preview(
         # 通道露给前端会渲染试听按钮，但其试听需走该 provider 自己的合成路径（尚未接）。
         # 在此显式拦下返回「暂不支持试听」，避免落到下方 DashScope/CosyVoice 通用分支拿着
         # 该 provider 的 key/voice_id 误合成（PR #1848 Codex review；真试听留作后续）。
+        # 与预制同名的克隆音色不拦（dispatch 克隆 provider 先于 MiMo 命中），仍走克隆试听。
         preview_core_config = await _config_manager.aget_core_config()
-        if tts_provider_registry.is_selected_preset_voice(
-            preview_core_config or {}, _config_manager, voice_id
+        if _is_unpreviewable_selected_preset_voice(
+            _config_manager, preview_core_config, voice_id, voice_data
         ):
             return JSONResponse({
                 'success': False,

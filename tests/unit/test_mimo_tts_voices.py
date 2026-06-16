@@ -18,13 +18,17 @@ class _CM:
     core_config.json for vLLM/GPT-SoVITS dropdown, the tts_custom slot for the
     GPT-SoVITS legacy gate)."""
 
-    def __init__(self, core_config, tts_custom_config=None, raw_core_config=None):
+    def __init__(self, core_config, tts_custom_config=None, raw_core_config=None, stored_voice_ids=None):
         self._core_config = core_config
         self._tts_custom_config = tts_custom_config or {"is_custom": False}
         self._raw = raw_core_config if raw_core_config is not None else {}
+        self._stored_voice_ids = set(stored_voice_ids or ())
 
     def get_core_config(self):
         return self._core_config
+
+    def voice_id_exists_in_any_storage(self, voice_id):
+        return voice_id in self._stored_voice_ids
 
     def load_json_config(self, filename, default):
         if filename == "core_config.json":
@@ -129,6 +133,22 @@ def test_no_catalog_winner_suppresses_native_voices():
     key = tts_provider_registry.selected_provider_key(core_config, cm)
     assert key == "vllm_omni"
     assert tts_provider_registry.preset_catalog_for_ui(key) is None
+
+
+@pytest.mark.unit
+def test_preview_guard_blocks_mimo_preset_but_lets_same_name_clone_through():
+    from main_routers.characters_router import _is_unpreviewable_selected_preset_voice
+
+    cc = {"CORE_API_TYPE": "qwen", "assistApi": "mimo"}
+    # 纯预制音色（无 voice_data、不在任何存储桶）→ 拦下（暂不支持试听）
+    assert _is_unpreviewable_selected_preset_voice(_CM(cc), cc, "Milo", None) is True
+    # 与预制同名的克隆音色：当前 api 有 voice_data → 放行走克隆试听
+    assert _is_unpreviewable_selected_preset_voice(_CM(cc), cc, "Milo", {"provider": "cosyvoice"}) is False
+    # 跨槽克隆（voice_data 为 None 但存在于任一存储桶）→ 同样放行
+    assert _is_unpreviewable_selected_preset_voice(_CM(cc, stored_voice_ids={"Milo"}), cc, "Milo", None) is False
+    # MiMo 未选中 → 不是预制，放行
+    not_sel = {"CORE_API_TYPE": "qwen", "assistApi": "qwen"}
+    assert _is_unpreviewable_selected_preset_voice(_CM(not_sel), not_sel, "Milo", None) is False
 
 
 @pytest.mark.unit
