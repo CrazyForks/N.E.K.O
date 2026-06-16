@@ -92,7 +92,7 @@
             }
 
             if (typeof window.hideVoicePreparingToast === 'function') window.hideVoicePreparingToast();
-            if (typeof window.stopRecording === 'function') window.stopRecording();
+            if (typeof window.stopRecording === 'function') window.stopRecording({ notifyServer: false });
             if (typeof window.stopSilenceDetection === 'function') window.stopSilenceDetection();
             if (typeof window.updateMicVolumeStatusNow === 'function') window.updateMicVolumeStatusNow(false);
 

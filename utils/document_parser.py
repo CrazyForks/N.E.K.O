@@ -609,19 +609,44 @@ def _child_text(element: ET.Element, tag: str) -> str:
 
 def _extract_drawing_text(xml_bytes: bytes) -> str:
     root = _parse_xml(xml_bytes)
-    values: list[str] = []
+    lines: list[str] = []
 
     def walk(node: ET.Element) -> None:
         if node.tag == _MC_NS + "Fallback":
             return
+        if node.tag == _A_NS + "p":
+            line = _extract_drawing_paragraph_text(node).strip()
+            if line:
+                lines.append(line)
+            return
         if node.tag == _A_NS + "t" and node.text:
-            values.append(node.text)
+            lines.append(node.text.strip())
         for child in node:
             walk(child)
 
     walk(root)
-    text = "\n".join(value.strip() for value in values if value.strip())
-    return text
+    return "\n".join(line for line in lines if line)
+
+
+def _extract_drawing_paragraph_text(paragraph: ET.Element) -> str:
+    chunks: list[str] = []
+
+    def walk(node: ET.Element) -> None:
+        for child in node:
+            if child.tag == _MC_NS + "Fallback":
+                continue
+            if child.tag == _A_NS + "p":
+                continue
+            if child.tag == _A_NS + "t" and child.text:
+                chunks.append(child.text)
+            elif child.tag == _A_NS + "tab":
+                chunks.append("\t")
+            elif child.tag == _A_NS + "br":
+                chunks.append("\n")
+            walk(child)
+
+    walk(paragraph)
+    return "".join(chunks)
 
 
 def _natural_key(value: str) -> list[Any]:

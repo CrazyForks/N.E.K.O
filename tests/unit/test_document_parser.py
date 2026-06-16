@@ -387,6 +387,26 @@ def test_pptx_slides_follow_presentation_order():
 
 
 @pytest.mark.unit
+def test_pptx_preserves_runs_within_paragraphs():
+    slide_xml = (
+        f'<p:sld xmlns:p="p" xmlns:a="{DRAWING_NS}">'
+        "<a:p>"
+        "<a:r><a:t>Hel</a:t></a:r>"
+        "<a:r><a:t>lo</a:t></a:r>"
+        "</a:p>"
+        "<a:p>"
+        "<a:r><a:t>Second line</a:t></a:r>"
+        "</a:p>"
+        "</p:sld>"
+    )
+
+    parsed = parse_document("runs.pptx", "", _pptx_with_slide_xml(slide_xml))
+
+    assert "Hello\nSecond line" in parsed["content"]
+    assert "Hel\nlo" not in parsed["content"]
+
+
+@pytest.mark.unit
 def test_rejects_legacy_macro_and_embedded_macro_office_documents():
     _assert_parse_error("legacy.doc", b"legacy", "legacy_office_unsupported")
     _assert_parse_error("macro.docm", b"PK\x03\x04", "macro_document_unsupported")

@@ -191,6 +191,91 @@
         return Math.ceil((text.length - commaIndex - 1) * 3 / 4);
     }
 
+    function readUint16BE(bytes, offset) {
+        return (bytes[offset] << 8) | bytes[offset + 1];
+    }
+
+    function readUint16LE(bytes, offset) {
+        return bytes[offset] | (bytes[offset + 1] << 8);
+    }
+
+    function readUint24LE(bytes, offset) {
+        return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
+    }
+
+    function readInt32LE(bytes, offset) {
+        var value = bytes[offset]
+            | (bytes[offset + 1] << 8)
+            | (bytes[offset + 2] << 16)
+            | (bytes[offset + 3] << 24);
+        return value;
+    }
+
+    function readUint32BE(bytes, offset) {
+        return ((bytes[offset] * 0x1000000)
+            + ((bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3])) >>> 0;
+    }
+
+    function getJpegHeaderSize(bytes) {
+        if (!startsWith(bytes, [0xFF, 0xD8])) return null;
+        var offset = 2;
+        while (offset + 9 < bytes.length) {
+            if (bytes[offset] !== 0xFF) {
+                offset += 1;
+                continue;
+            }
+            while (offset < bytes.length && bytes[offset] === 0xFF) offset += 1;
+            var marker = bytes[offset];
+            offset += 1;
+            if (marker === 0xD9 || marker === 0xDA) return null;
+            if (offset + 2 > bytes.length) return null;
+            var length = readUint16BE(bytes, offset);
+            if (length < 2 || offset + length > bytes.length) return null;
+            if ((marker >= 0xC0 && marker <= 0xC3)
+                    || (marker >= 0xC5 && marker <= 0xC7)
+                    || (marker >= 0xC9 && marker <= 0xCB)
+                    || (marker >= 0xCD && marker <= 0xCF)) {
+                return {
+                    width: readUint16BE(bytes, offset + 5),
+                    height: readUint16BE(bytes, offset + 3)
+                };
+            }
+            offset += length;
+        }
+        return null;
+    }
+
+    function getImageHeaderSize(bytes, kind) {
+        if (!bytes || bytes.length < 10) return null;
+        if (kind === 'png' && bytes.length >= 24) {
+            return { width: readUint32BE(bytes, 16), height: readUint32BE(bytes, 20) };
+        }
+        if (kind === 'gif' && bytes.length >= 10) {
+            return { width: readUint16LE(bytes, 6), height: readUint16LE(bytes, 8) };
+        }
+        if (kind === 'bmp' && bytes.length >= 26) {
+            return { width: Math.abs(readInt32LE(bytes, 18)), height: Math.abs(readInt32LE(bytes, 22)) };
+        }
+        if (kind === 'jpeg') {
+            return getJpegHeaderSize(bytes);
+        }
+        if (kind === 'webp' && bytes.length >= 30) {
+            var subtype = String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15]);
+            if (subtype === 'VP8X') {
+                return { width: readUint24LE(bytes, 24) + 1, height: readUint24LE(bytes, 27) + 1 };
+            }
+            if (subtype === 'VP8 ' && bytes.length >= 30
+                    && bytes[23] === 0x9D && bytes[24] === 0x01 && bytes[25] === 0x2A) {
+                return { width: readUint16LE(bytes, 26) & 0x3FFF, height: readUint16LE(bytes, 28) & 0x3FFF };
+            }
+            if (subtype === 'VP8L' && bytes.length >= 25 && bytes[20] === 0x2F) {
+                var bits = bytes[21] | (bytes[22] << 8) | (bytes[23] << 16) | (bytes[24] << 24);
+                return { width: (bits & 0x3FFF) + 1, height: ((bits >>> 14) & 0x3FFF) + 1 };
+            }
+        }
+        return null;
+    }
+
     function loadImageFromDataUrl(dataUrl) {
         return new Promise(function (resolve, reject) {
             var image = new Image();
@@ -255,9 +340,16 @@
         };
     }
 
-    async function parseImageFile(file, kind) {
+    async function parseImageFile(file, kind, prefix) {
         if (file.size > MAX_IMAGE_BYTES) {
             return { rejected: { reason: 'image_too_large' } };
+        }
+
+        var header = kind === 'jpeg' ? await readPrefix(file, 65536) : (prefix && prefix.length >= 64 ? prefix : await readPrefix(file, 65536));
+        var headerSize = getImageHeaderSize(header, kind);
+        if (!headerSize || !headerSize.width || !headerSize.height
+                || headerSize.width * headerSize.height > MAX_IMAGE_PIXELS) {
+            return { rejected: { reason: 'image_dimensions_invalid' } };
         }
 
         var image = await loadImage(file);
@@ -411,7 +503,7 @@
             return { rejected: { reason: 'svg_unsupported' } };
         }
         if (isImageKind(kind)) {
-            return parseImageFile(file, kind);
+            return parseImageFile(file, kind, prefix);
         }
         if (mime.indexOf('image/') === 0) {
             return { rejected: { reason: 'image_type_unsupported' } };

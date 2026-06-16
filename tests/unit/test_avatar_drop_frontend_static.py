@@ -7,6 +7,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP_BUTTONS_PATH = REPO_ROOT / "static" / "app-buttons.js"
+APP_AUDIO_CAPTURE_PATH = REPO_ROOT / "static" / "app-audio-capture.js"
 APP_WEBSOCKET_PATH = REPO_ROOT / "static" / "app-websocket.js"
 CORE_PATH = REPO_ROOT / "main_logic" / "core.py"
 INDEX_TEMPLATE_PATH = REPO_ROOT / "templates" / "index.html"
@@ -68,6 +69,9 @@ def test_avatar_drop_parser_declares_supported_formats_and_limits():
     assert "var MAX_IMAGE_PIXELS = 24000000;" in source
     assert "var MAX_IMAGE_SIDE = 1280;" in source
     assert "var MAX_IMAGE_DATA_URL_BYTES = 1200 * 1024;" in source
+    assert "function getImageHeaderSize(bytes, kind)" in source
+    assert "var headerSize = getImageHeaderSize(header, kind);" in source
+    assert source.index("var headerSize = getImageHeaderSize(header, kind);") < source.index("var image = await loadImage(file);")
 
     assert "var DOCUMENT_EXTENSIONS = ['pdf', 'docx', 'xlsx', 'pptx'];" in source
     for extension in ("'txt'", "'md'", "'json'", "'csv'", "'tsx'", "'py'", "'ps1'", "'sql'"):
@@ -138,6 +142,8 @@ def test_avatar_drop_payload_sends_full_prompt_but_records_memory_summary_only()
     wait_teardown = _js_function_block(source, "waitForAvatarDropVoiceTeardown")
     prepare_text_mode = _js_function_block(source, "prepareAvatarDropTextMode")
     send_payload = _js_function_block(source, "sendAvatarDropPayload")
+    audio_capture_source = _read(APP_AUDIO_CAPTURE_PATH)
+    stop_recording = _js_function_block(audio_capture_source, "stopRecording")
     app_websocket_source = _read(APP_WEBSOCKET_PATH)
 
     assert "<<<TEXT_FILE_" in build_prompt
@@ -167,9 +173,11 @@ def test_avatar_drop_payload_sends_full_prompt_but_records_memory_summary_only()
 
     assert "S.isRecording || S.voiceChatActive || S.voiceStartPending" in voice_active
     assert "window.isMicStarting" in voice_active
-    assert "window.stopRecording()" in prepare_text_mode
+    assert "window.stopRecording({ notifyServer: false })" in prepare_text_mode
     assert "S.socket.send(JSON.stringify({ action: 'end_session' }))" in prepare_text_mode
     assert "await waitForAvatarDropVoiceTeardown(1500)" in prepare_text_mode
+    assert "const notifyServer = options.notifyServer !== false;" in stop_recording
+    assert "if (notifyServer && S.socket && S.socket.readyState === WebSocket.OPEN)" in stop_recording
     assert "window.addEventListener('neko:session-ended-by-server', finish, { once: true });" in wait_teardown
     assert "window.clearAudioQueue" in prepare_text_mode
     assert "S.isTextSessionActive = false;" in prepare_text_mode
