@@ -95,7 +95,7 @@ class FocusScorer:
         kw = self._signal_keyword(user_text)
         cadence = self._signal_cadence(user_text)
         silence = self._signal_silence(snapshot, user_text)
-        open_thread = self._signal_open_thread(snapshot)
+        open_thread = self._signal_open_thread(snapshot, user_text)
 
         signals = {
             "keyword": kw,
@@ -158,9 +158,16 @@ class FocusScorer:
             return 1.0
         return (secs - lo) / (hi - lo)
 
-    def _signal_open_thread(self, snapshot) -> float:
-        # Applicable on both paths: a hanging thread / due follow-up is the
-        # anchor for "she comes back to what was left open".
+    def _signal_open_thread(self, snapshot, user_text: Optional[str]) -> Optional[float]:
+        # Idle-path only. On the inline path the just-arrived message has
+        # already cleared the tracker's unfinished_thread (on_user_message
+        # runs before scoring), so reading it here would be a structural 0
+        # that just dilutes the inline average — and a user replying to an
+        # open question is already captured by the keyword cue. So this is
+        # the anchor for "she comes back to what was left open" only when
+        # there's no fresh message (idle).
+        if user_text is not None:
+            return None
         has_unfinished = getattr(snapshot, "unfinished_thread", None) is not None
         has_open = bool(getattr(snapshot, "open_threads", None))
         return 1.0 if (has_unfinished or has_open) else 0.0

@@ -74,7 +74,6 @@ from main_logic.agent_event_bus import (
     publish_voice_transcript_observed_best_effort,
 )
 from utils.preferences import load_global_conversation_settings, aload_global_conversation_settings
-import config
 from config import (
     MEMORY_SERVER_PORT,
     TOOL_SERVER_PORT,
@@ -83,9 +82,10 @@ from config import (
     AVATAR_INTERACTION_DEDUPE_MAX_ITEMS,
     HIDE_DIRTY_VOICE_TRANSCRIPTS,
 )
-# NOTE: FOCUS_MODE_ENABLED is read live via ``config.FOCUS_MODE_ENABLED`` at the
-# gate (not imported by value), so a runtime toggle / test monkeypatch of the
-# flag takes effect — consistent with how the SM/scorer read the other knobs.
+# FOCUS_MODE_ENABLED is read live with a function-local ``from config import
+# FOCUS_MODE_ENABLED`` at each gate (re-imported per call → picks up a runtime
+# toggle / test monkeypatch), consistent with how the SM/scorer read the other
+# knobs at call time. Single import style keeps the module clean.
 from config.prompts.prompts_sys import (
     _loc,
     SESSION_INIT_PROMPT, SESSION_INIT_PROMPT_AGENT,
@@ -1615,7 +1615,8 @@ class LLMSessionManager:
         never blocks the user reply. Returns False fast when the master switch
         is off (skips the snapshot cost).
         """
-        if not config.FOCUS_MODE_ENABLED:
+        from config import FOCUS_MODE_ENABLED  # live read (re-imported per call)
+        if not FOCUS_MODE_ENABLED:
             return False
         if not (user_text and user_text.strip()):
             return False
@@ -1653,6 +1654,14 @@ class LLMSessionManager:
         except Exception as e:
             logger.warning("[%s] focus inline decision failed (degrading to regular): %s",
                            self.lanlan_name, e)
+            # Don't leave a stale FOCUS episode if get_snapshot/score/
+            # update_focus raised mid-episode (mirrors the privacy early-exit).
+            try:
+                if self.state.mode is CognitionMode.FOCUS:
+                    await self.state.update_focus(0.0, topic_changed=True)
+            except Exception as _exit_err:
+                logger.debug("[%s] focus inline fail-exit also failed: %s",
+                             self.lanlan_name, _exit_err)
             return False
 
     async def _focus_idle_decision(self, snapshot) -> bool:
@@ -1670,7 +1679,8 @@ class LLMSessionManager:
         — the cross-path interaction is a known knob (see
         docs/design/focus-truename-mode.md).
         """
-        if not config.FOCUS_MODE_ENABLED:
+        from config import FOCUS_MODE_ENABLED  # live read (re-imported per call)
+        if not FOCUS_MODE_ENABLED:
             return False
         if snapshot is None:
             # Privacy mode / tracker unavailable: don't score, but cleanly exit
@@ -1679,8 +1689,10 @@ class LLMSessionManager:
             try:
                 if self.state.mode is CognitionMode.FOCUS:
                     await self.state.update_focus(0.0, topic_changed=True)
-            except Exception:
-                pass
+            except Exception as _exit_err:
+                # best-effort cleanup; never block the proactive path
+                logger.debug("[%s] focus idle privacy-exit failed: %s",
+                             self.lanlan_name, _exit_err)
             return False
         try:
             scored = self._focus_scorer.score(snapshot, user_text=None)

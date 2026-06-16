@@ -256,7 +256,14 @@ def scan_vulnerability_keywords(message: str) -> int:
             kwl = kw.lower()
             if kwl in lower:
                 matched.add(kwl)
-    return len(matched)
+    # De-nest: a single cue often matches both a base phrase and an
+    # intensified form that contains it (e.g. "好难受" matches both "难受"
+    # and "好难受"; "so lonely" matches "lonely" and "so lonely"). Counting
+    # both lets one cue saturate FOCUS_KEYWORD_SATURATION, so drop any
+    # matched phrase that is a substring of another matched phrase — keep
+    # only maximal hits.
+    maximal = [p for p in matched if not any(p != q and p in q for q in matched)]
+    return len(maximal)
 
 
 def detect_topic_switch(message: str) -> bool:

@@ -185,6 +185,15 @@ def test_scorer_open_thread_lifts_idle_score():
     assert res.score == 1.0  # both applicable idle signals saturated
 
 
+def test_scorer_open_thread_idle_only():
+    # On the inline path the just-arrived message has already cleared the
+    # tracker's unfinished_thread, so open_thread is N/A (None) there — it
+    # must not be a structural 0 that dilutes the inline average.
+    s = FocusScorer("x")
+    res = s.score(_Snap(open_threads=["残留的开放话题"]), user_text="今天好累")
+    assert res.signals["open_thread"] is None
+
+
 # ── 3. SessionStateMachine.update_focus (async) ─────────────────────
 async def test_sm_enter_and_exit_cycle(monkeypatch):
     monkeypatch.setattr(config, "FOCUS_MODE_ENABLED", True)
@@ -272,6 +281,13 @@ async def test_sm_reset_clears_focus(monkeypatch):
 def test_vulnerability_keyword_count():
     assert scan_vulnerability_keywords("好累，一个人，没意思") >= 3
     assert scan_vulnerability_keywords("今天天气不错") == 0
+
+
+def test_vulnerability_denests_nested_phrases():
+    # "好难受" matches both "难受" and "好难受"; de-nesting counts it once,
+    # so one cue can't double-count toward saturation.
+    assert scan_vulnerability_keywords("好难受") == 1
+    assert scan_vulnerability_keywords("so lonely") == 1
 
 
 def test_vulnerability_cross_locale_mixed_language():
