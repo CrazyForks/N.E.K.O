@@ -2298,7 +2298,6 @@ class LLMSessionManager:
         """
         transcript_text = transcript.strip()
         record_transcript_text = transcript_text
-        effective_is_voice_source = is_voice_source
         voice_rms_recorded = False
 
         # 更新用户活动时间戳（用于主动搭话检测）。先捕获「转写到达时刻」局部变量，
@@ -2309,7 +2308,7 @@ class LLMSessionManager:
         _transcript_arrival_ts = time.time()
         self.last_user_activity_time = _transcript_arrival_ts
         if (
-            effective_is_voice_source
+            is_voice_source
             and transcript_text
             and self._takeover_input_dispatcher is not None
         ):
@@ -2339,7 +2338,7 @@ class LLMSessionManager:
                 logger.warning("[%s] session takeover dispatcher failed: %s", self.lanlan_name, exc)
 
         if (
-            effective_is_voice_source
+            is_voice_source
             and transcript_text
             and self._should_suppress_dirty_voice_transcript(transcript_text)
         ):
@@ -2349,16 +2348,16 @@ class LLMSessionManager:
             )
             return
 
-        if effective_is_voice_source and not voice_rms_recorded:
+        if is_voice_source and not voice_rms_recorded:
             # transcript 到达 → VAD 在窗口内捕捉到声音，标记 voice RMS 活跃；
             # 即使转录为空（VAD 误触发或转录失败）也算一次"用户在发声"，
             # 维持 voice_engaged 状态。
             self._activity_tracker.on_voice_rms()
 
-        if effective_is_voice_source and record_transcript_text:
+        if is_voice_source and record_transcript_text:
             self._fire_task(self._broadcast_voice_transcript_observed(record_transcript_text))
 
-        if effective_is_voice_source:
+        if is_voice_source:
             # 仅非空转录才算"用户消息"：on_user_message 会清掉 unfinished_thread、
             # bump _conv_seq（让 open_threads 缓存失效）、把文本进 buffer 给
             # emotion-tier LLM 用——空 transcript 这些副作用都不该触发。
