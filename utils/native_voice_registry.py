@@ -368,7 +368,18 @@ def _read_tts_native_provider_for_ui(cm: "ConfigManager") -> str | None:
 
     # MiMo（assistApi=mimo / TTS_PROVIDER=mimo）不再走这里：它是 hosted provider，
     # 预制目录由 tts_provider_registry 的 preset_catalog 提供，/voices 与校验改查
-    # 注册表（见设计文档 §4，MiMo 归 hosted）。此处只认仍属 native 的 TTS_PROVIDER。
+    # 注册表（见设计文档 §4，MiMo 归 hosted）。但若这样一个「自带静态预制目录」的
+    # 注册表 provider 赢得当前配置（如 assistApi=mimo），它在 dispatch 里 priority 高于
+    # 此处可能命中的 native TTS_PROVIDER（如 ttsProvider=step），native 必须让位：
+    # 否则 is_saveable_native_voice 会误认 step 内置音色可保存，而合成实际走 MiMo
+    # 把该音色丢弃/不支持（对偶旧实现里 assistApi=mimo 先于 TTS_PROVIDER 命中的语义）。
+    # 仅对「有 preset_catalog」的赢家让位——不碰 vllm/gptsovits 等无静态目录的 provider，
+    # 保持它们既有的 native 共存行为，避免误删存量 native 音色。
+    from utils import tts_provider_registry  # utils 内同层，惰性导入避免 bootstrap 期环
+    winner = tts_provider_registry.selected_provider_key(core_config, cm)
+    if winner and tts_provider_registry.preset_catalog_for_ui(winner) is not None:
+        return None
+
     tts_provider = str(
         core_config.get('TTS_PROVIDER') or core_config.get('ttsProvider') or ''
     ).strip().lower()

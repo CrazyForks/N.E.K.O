@@ -782,22 +782,17 @@ def _get_active_native_preview_provider(config_manager, voice_id: object) -> str
 
 def _is_unpreviewable_selected_preset_voice(config_manager, core_config, voice_id, voice_data) -> bool:
     """Whether voice_id is a built-in preset of the currently selected hosted/local
-    provider (e.g. MiMo) that has no dedicated preview path yet — and is NOT a user clone.
+    provider (e.g. MiMo) that has no dedicated preview path yet — and is NOT a
+    clone of the *current* API.
 
-    A cloned voice whose id collides with a preset name must still preview through its
-    clone path: runtime dispatch selects clone providers (priority 30/40/50) ahead of a
-    static-catalog provider like MiMo (60), so the clone wins. Any id present in a voice
-    storage bucket is therefore never treated as an unpreviewable preset (dual to the
-    native-preview collision guard, which passes voice_id_exists_in_any_storage)."""
+    A clone in the current API (``voice_data`` present) must still preview through its
+    clone path. The collision check is deliberately current-API only, mirroring runtime
+    dispatch: clone providers are selected from ``voice_meta`` = ``get_voices_for_current_api``,
+    so a same-name clone living in a *different* api-key bucket does NOT win — for it the
+    selected static-catalog provider (MiMo) is what dispatch routes to, so it is correctly
+    treated as an unpreviewable preset rather than misrouted to the generic clone preview."""
     if voice_data:
         return False
-    try:
-        if config_manager.voice_id_exists_in_any_storage(voice_id):
-            return False
-    except Exception:
-        # 存储桶查询异常（极少见的 IO 错误）：按「无法确认是克隆」继续走下方预制判定，
-        # 不因一次查询失败改变结论；留一条带堆栈的 debug 便于排查（同 _grok 撞名查模式）。
-        logger.debug("voice_id_exists_in_any_storage 查询失败，按非克隆继续判定", exc_info=True)
     return tts_provider_registry.is_selected_preset_voice(core_config or {}, config_manager, voice_id)
 
 

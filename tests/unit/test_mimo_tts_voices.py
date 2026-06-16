@@ -136,19 +136,41 @@ def test_no_catalog_winner_suppresses_native_voices():
 
 
 @pytest.mark.unit
-def test_preview_guard_blocks_mimo_preset_but_lets_same_name_clone_through():
+def test_preview_guard_blocks_mimo_preset_but_lets_current_api_clone_through():
     from main_routers.characters_router import _is_unpreviewable_selected_preset_voice
 
     cc = {"CORE_API_TYPE": "qwen", "assistApi": "mimo"}
-    # 纯预制音色（无 voice_data、不在任何存储桶）→ 拦下（暂不支持试听）
+    # 纯预制音色（当前 api 无 voice_data）→ 拦下（暂不支持试听）
     assert _is_unpreviewable_selected_preset_voice(_CM(cc), cc, "Milo", None) is True
-    # 与预制同名的克隆音色：当前 api 有 voice_data → 放行走克隆试听
+    # 当前 api 的同名克隆（有 voice_data）→ 放行走克隆试听
     assert _is_unpreviewable_selected_preset_voice(_CM(cc), cc, "Milo", {"provider": "cosyvoice"}) is False
-    # 跨槽克隆（voice_data 为 None 但存在于任一存储桶）→ 同样放行
-    assert _is_unpreviewable_selected_preset_voice(_CM(cc, stored_voice_ids={"Milo"}), cc, "Milo", None) is False
+    # 跨槽离线克隆（当前 api 无 voice_data）：dispatch 只从当前 api voice_meta 选克隆，
+    # 它不会赢 → 仍按 MiMo 预制拦下，避免落到通用克隆预览误路由
+    assert _is_unpreviewable_selected_preset_voice(_CM(cc, stored_voice_ids={"Milo"}), cc, "Milo", None) is True
     # MiMo 未选中 → 不是预制，放行
     not_sel = {"CORE_API_TYPE": "qwen", "assistApi": "qwen"}
     assert _is_unpreviewable_selected_preset_voice(_CM(not_sel), not_sel, "Milo", None) is False
+
+
+@pytest.mark.unit
+def test_native_provider_for_ui_steps_aside_when_mimo_preset_wins():
+    from utils.native_voice_registry import _read_tts_native_provider_for_ui, is_saveable_native_voice
+
+    # 控制组：无 registry 赢家时，ttsProvider=step 仍按 native 'step' 命中
+    ctrl = {"CORE_API_TYPE": "qwen", "ttsProvider": "step"}
+    assert _read_tts_native_provider_for_ui(_CM(ctrl)) == "step"
+
+    # assistApi=mimo（带预制目录）赢得选择 → native 让位，不再返回 'step'，
+    # 从而 step 内置音色不会被 is_saveable_native_voice 误判可保存（合成实走 MiMo）
+    won = {"CORE_API_TYPE": "qwen", "assistApi": "mimo", "ttsProvider": "step"}
+    cm = _CM(won)
+    assert _read_tts_native_provider_for_ui(cm) is None
+    assert is_saveable_native_voice(cm, "linjiameimei") is False
+    # vllm/gptsovits 等无静态目录的赢家不触发让位（保持既有 native 共存，不误删存量）
+    vllm = {"CORE_API_TYPE": "qwen", "ttsProvider": "step", "ENABLE_CUSTOM_API": True}
+    assert _read_tts_native_provider_for_ui(
+        _CM(vllm, raw_core_config={"ttsModelProvider": "vllm_omni"})
+    ) == "step"
 
 
 @pytest.mark.unit
