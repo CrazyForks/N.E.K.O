@@ -583,6 +583,13 @@ def _get_session_manager(name):
     return rs.session_manager if rs is not None else None
 
 
+try:
+    from main_logic.topic.delivery import register_topic_session_manager_getter
+    register_topic_session_manager_getter(_get_session_manager)
+except Exception:
+    logger.warning("Failed to register topic session manager getter", exc_info=True)
+
+
 def _select_fallback_session_manager():
     """Return a single connected session manager as a safe fallback, if unambiguous."""
     connected = []

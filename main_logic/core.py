@@ -37,6 +37,7 @@ from typing import Any, Awaitable, Callable, Optional
 # None collapses both into the same code path and would let recovery /
 # proactive paths accidentally bind their messages to a newer request_id.
 _REQUEST_ID_UNSET: Any = object()
+_VOICE_PROACTIVE_ACK_GRACE_S = 0.05
 from datetime import datetime
 from websockets import exceptions as web_exceptions
 from fastapi import WebSocket, WebSocketDisconnect
@@ -62,7 +63,11 @@ from main_logic.tool_calling import (
 from utils.llm_client import AIMessage
 from main_logic.session_state import SessionStateMachine, SessionEvent, ProactivePhase, CognitionMode
 from main_logic.lifecycle_bus import LifecycleEventBus
-from main_logic.proactive_delivery import ProactiveDeliveryManager
+from main_logic.proactive_delivery import (
+    DELIVERY_RETRACTED_KEY,
+    ProactiveDeliveryManager,
+    resolve_callback_delivery_ack,
+)
 from main_logic.agent_event_bus import (
     dispatch_text_user_message,
     dispatch_user_utterance,
@@ -950,7 +955,12 @@ class LLMSessionManager:
         # ActivitySnapshot，供 proactive_chat Phase 1/2 决策搭话倾向。
         # 详见 docs/design/user-activity-tracker.md。
         from main_logic.activity import FocusScorer, UserActivityTracker
+        from main_logic.conversation_turns import create_default_turn_dispatcher
         self._activity_tracker = UserActivityTracker(lanlan_name)
+        self._turn_dispatcher = create_default_turn_dispatcher(
+            lanlan_name,
+            self._activity_tracker,
+        )
 
         # Focus mode 凝神 scorer（docs/design/focus-truename-mode.md）：把
         # ActivitySnapshot + 用户消息文本评成一个 [0,1] 分，喂给 self.state
@@ -994,8 +1004,9 @@ class LLMSessionManager:
         self._activity_tracker.set_context_prompt_callback(_push_activity_context_prompt)
 
         # AI 当前轮文本 buffer：每个 send_lanlan_response chunk 累加，turn end
-        # 时连同 on_ai_message 一起喂给 tracker。后者用末尾文本判断是否问问号
-        # → 触发 unfinished_thread 机制（5 分钟内允许至多 2 次跟进）。
+        # 时作为一个 conversation turn 发给 dispatcher。activity sink 用末尾
+        # 文本判断是否问问号 → 触发 unfinished_thread 机制（5 分钟内允许至多 2
+        # 次跟进）；topic sink 独立消费同一 turn，不和 activity tracker 耦合。
         self._current_ai_turn_text: str = ''
         self._recent_ai_voice_echo_text: str = ''
         self._recent_ai_voice_echo_at: float = 0.0
@@ -1011,6 +1022,7 @@ class LLMSessionManager:
         
         # 用户语言设置（由 start_session 或前端 set_user_language() 设置，初始为 None）
         self.user_language = None
+        self._conversation_turn_language = None
         # 翻译服务（延迟初始化）
         self._translation_service = None
         
@@ -1771,21 +1783,45 @@ class LLMSessionManager:
                     if is_first_chunk and self.tts_thread and not self.tts_thread.is_alive():
                         self._respawn_tts_worker()
 
+    def _set_conversation_turn_language(self, language: str | None) -> None:
+        dispatcher = getattr(self, '_turn_dispatcher', None)
+        if dispatcher is not None:
+            dispatcher.set_language(language)
+
+    def _note_user_turn(self, *, text: str | None = None, now: float | None = None) -> None:
+        dispatcher = getattr(self, '_turn_dispatcher', None)
+        if dispatcher is not None:
+            dispatcher.note_user_message(text=text, now=now)
+            return
+        if now is None:
+            self._activity_tracker.on_user_message(text=text)
+        else:
+            self._activity_tracker.on_user_message(text=text, now=now)
+
+    def _note_ai_turn(self, *, text: str | None = None, now: float | None = None) -> None:
+        dispatcher = getattr(self, '_turn_dispatcher', None)
+        if dispatcher is not None:
+            dispatcher.note_ai_message(text=text, now=now)
+            return
+        if now is None:
+            self._activity_tracker.on_ai_message(text=text)
+        else:
+            self._activity_tracker.on_ai_message(text=text, now=now)
+
     def _flush_ai_turn_text_to_tracker(self) -> None:
-        """Flush the per-turn AI text buffer into the activity tracker.
+        """Flush the per-turn AI text buffer into conversation turn sinks.
 
         Called from each AI-turn-end exit point — there are three:
           - ``_emit_turn_end`` for regular replies (and truncate-recovery)
           - ``handle_proactive_complete`` for the agent direct-reply path
           - ``finish_proactive_delivery`` for /api/proactive_chat success
 
-        The tracker runs the question heuristic over the text and (when
-        text is non-empty) bumps ``_conv_seq`` for open_threads cache
-        invalidation. Empty / None text is fine — it just updates the
-        timestamp without opening an unfinished_thread or invalidating
-        the cache.
+        The activity sink runs the question heuristic over the text and
+        (when text is non-empty) bumps ``_conv_seq`` for open_threads cache
+        invalidation. Other sinks, such as background topic collection, see
+        the same turn without living inside ``UserActivityTracker``.
         """
-        self._activity_tracker.on_ai_message(text=self._current_ai_turn_text or None)
+        self._note_ai_turn(text=self._current_ai_turn_text or None)
         self._current_ai_turn_text = ''
 
     async def handle_proactive_complete(self, content_committed: bool = True):
@@ -2455,7 +2491,7 @@ class LLMSessionManager:
             # bump _conv_seq（让 open_threads 缓存失效）、把文本进 buffer 给
             # emotion-tier LLM 用——空 transcript 这些副作用都不该触发。
             if transcript_text:
-                self._activity_tracker.on_user_message(text=transcript)
+                self._note_user_turn(text=transcript)
                 # 真实用户语音消息（已过 echo 抑制 + 非空）才刷「真消息」时间戳，
                 # 给 mini-game 邀请隐式 dismiss 用，避免回声/空噪声误判用户已回应。
                 # 用顶部捕获的到达时刻而非此处 time.time()：takeover dispatcher 的
@@ -4345,8 +4381,16 @@ class LLMSessionManager:
         # 全部回退英文。改为：仅在 user_language 还没被设过时才 seed 一次，已经
         # 有 session 真值就保留——全局缓存晚到的更新由 refresh_global_language
         # 路径独立处理（见 main_routers/config_router.py:steam_language 端点）。
+        topic_language_seed = None
         if not getattr(self, 'user_language', None):
-            self.user_language = normalize_language_code(get_global_language(), format='short')
+            topic_language_seed = normalize_language_code(get_global_language_full(), format='full')
+            self.user_language = normalize_language_code(topic_language_seed, format='short')
+            self._conversation_turn_language = topic_language_seed
+        self._set_conversation_turn_language(
+            self._conversation_turn_language
+            or topic_language_seed
+            or self.user_language
+        )
         # 重置防刷屏标志
         self.session_closed_by_server = False
         self.last_audio_send_error_time = 0.0
@@ -5943,7 +5987,41 @@ class LLMSessionManager:
         )
         return {"accepted": False, "reason": ack_reason, "interaction_id": interaction_id}
 
-    async def trigger_agent_callbacks(self) -> None:
+    def _purge_retracted_agent_callbacks(self) -> None:
+        retracted_ids = {
+            cb.get("_callback_delivery_id")
+            for cb in self.pending_agent_callbacks
+            if cb.get(DELIVERY_RETRACTED_KEY) and cb.get("_callback_delivery_id")
+        }
+        has_retracted = any(
+            cb.get(DELIVERY_RETRACTED_KEY)
+            for cb in self.pending_agent_callbacks
+        )
+        if not has_retracted:
+            return
+        self.pending_agent_callbacks = [
+            cb for cb in self.pending_agent_callbacks
+            if not cb.get(DELIVERY_RETRACTED_KEY)
+        ]
+        if retracted_ids:
+            self.pending_extra_replies = [
+                extra for extra in self.pending_extra_replies
+                if extra.get("_callback_delivery_id") not in retracted_ids
+            ]
+
+    def _purge_retracted_agent_callback_extras(self, callbacks: list) -> None:
+        retracted_ids = {
+            cb.get("_callback_delivery_id")
+            for cb in callbacks
+            if cb.get(DELIVERY_RETRACTED_KEY) and cb.get("_callback_delivery_id")
+        }
+        if retracted_ids:
+            self.pending_extra_replies = [
+                extra for extra in self.pending_extra_replies
+                if extra.get("_callback_delivery_id") not in retracted_ids
+            ]
+
+    async def trigger_agent_callbacks(self) -> bool:
         """Proactively deliver pending agent task results via LLM rephrase.
 
         Design:
@@ -5960,19 +6038,29 @@ class LLMSessionManager:
           the SM's atomic claim; also mutually exclusive with
           ``/api/proactive_chat`` / ``trigger_greeting``.
         """
+        def _active_proactive_callbacks(callbacks: list) -> list:
+            return [
+                cb for cb in callbacks
+                if cb.get("delivery_mode") != "passive"
+                and not cb.get(DELIVERY_RETRACTED_KEY)
+            ]
+
         sess_type = type(self.session).__name__ if self.session else "None"
         logger.info(
             "[%s] trigger_agent_callbacks enter: session=%s phase=%s pending=%d",
             self.lanlan_name, sess_type, self.state.phase.value, len(self.pending_agent_callbacks),
         )
         if not self.pending_agent_callbacks:
-            return
+            return False
+        self._purge_retracted_agent_callbacks()
+        if not self.pending_agent_callbacks:
+            return False
         if self.is_goodbye_silent():
             logger.info(
                 "[%s] trigger_agent_callbacks deferred: goodbye silent, keeping %d callback(s)",
                 self.lanlan_name, len(self.pending_agent_callbacks),
             )
-            return
+            return False
         # 与 handle_text_data / handle_response_complete 等输出 handler 对偶：
         # takeover 期间普通 chat LLM 输出会被静音，所以现在派发会被吞掉、callback
         # 内容白丢。把入口卡住，callback 留在队列里等 takeover 释放。
@@ -5981,7 +6069,7 @@ class LLMSessionManager:
                 "[%s] trigger_agent_callbacks deferred: session takeover active, keeping %d callback(s) for next attempt",
                 self.lanlan_name, len(self.pending_agent_callbacks),
             )
-            return
+            return False
 
         # Hard delivery contract: trigger_agent_callbacks ONLY consumes
         # proactive callbacks. Passive ones must remain in the queue and
@@ -5989,16 +6077,13 @@ class LLMSessionManager:
         # Without this filter, a passive callback enqueued earlier would get
         # piggy-backed onto any later proactive trigger — silently breaking
         # ``delivery="passive"``'s "don't interrupt" promise.
-        proactive_cbs = [
-            cb for cb in self.pending_agent_callbacks
-            if cb.get("delivery_mode") != "passive"
-        ]
+        proactive_cbs = _active_proactive_callbacks(self.pending_agent_callbacks)
         if not proactive_cbs:
             logger.debug(
                 "[%s] trigger_agent_callbacks: queue has only passive callbacks (n=%d); deferring to next user turn",
                 self.lanlan_name, len(self.pending_agent_callbacks),
             )
-            return
+            return False
 
         # Voice mode：直接 conversation.item.create(role=user) + response.create，
         # 让 LLM 立即用本角色嗓音主动回应 proactive callback，不等用户开口。
@@ -6024,15 +6109,13 @@ class LLMSessionManager:
                 # gate + inject avoids injecting into a closing old session.
                 voice_sess = self.session
                 if not isinstance(voice_sess, OmniRealtimeClient):
-                    return
+                    return False
                 # Re-filter inside the lock: a concurrent task may have already
                 # injected+pruned these cbs while we waited on the lock.
-                proactive_cbs = [
-                    cb for cb in self.pending_agent_callbacks
-                    if cb.get("delivery_mode") != "passive"
-                ]
+                self._purge_retracted_agent_callbacks()
+                proactive_cbs = _active_proactive_callbacks(self.pending_agent_callbacks)
                 if not proactive_cbs:
-                    return
+                    return False
                 # Playback-aware gate: ``_voice_playback_active`` is True
                 # between the FRONTEND's voice_play_start and voice_play_end,
                 # i.e. while buffered audio is still AUDIBLY playing — which
@@ -6053,17 +6136,19 @@ class LLMSessionManager:
                         self._voice_playback_active,
                         len(proactive_cbs),
                     )
-                    return
+                    return False
 
                 _lang = normalize_language_code(self.user_language, format='short')
-                instruction = _build_callback_instruction(
-                    proactive_cbs,
-                    lang=_lang,
-                    lanlan_name=self.lanlan_name,
-                    master_name=self.master_name,
-                    passive=False,
-                )
-                voice_snapshot = list(proactive_cbs)
+                voice_snapshot = [
+                    cb for cb in proactive_cbs
+                    if not cb.get(DELIVERY_RETRACTED_KEY)
+                ]
+                if not voice_snapshot:
+                    return False
+                # NOTE: the callback instruction is built AFTER the media-stream
+                # gate + retraction re-filter below (right before inject), so it
+                # reflects the final delivered set. Don't build it here — that
+                # copy would be stale the moment a cb retracts during streaming.
                 # Snapshot the paired extras entries NOW (before prune) so the
                 # rejection handler can restore BOTH queues if the server
                 # rejects asynchronously.
@@ -6181,7 +6266,34 @@ class LLMSessionManager:
                         self.lanlan_name, len(voice_snapshot),
                     )
                     self._schedule_proactive_retry(self.proactive_manager.min_gap_s)
-                    return
+                    return False
+                voice_snapshot[:] = [
+                    cb for cb in voice_snapshot
+                    if not cb.get(DELIVERY_RETRACTED_KEY)
+                ]
+                self._purge_retracted_agent_callbacks()
+                if not voice_snapshot:
+                    logger.info(
+                        "[%s] trigger_agent_callbacks: voice proactive callbacks retracted before inject",
+                        self.lanlan_name,
+                    )
+                    return False
+                instruction = _build_callback_instruction(
+                    voice_snapshot,
+                    lang=_lang,
+                    lanlan_name=self.lanlan_name,
+                    master_name=self.master_name,
+                    passive=False,
+                )
+                delivered_ids = {
+                    cb.get("_callback_delivery_id")
+                    for cb in voice_snapshot
+                    if cb.get("_callback_delivery_id")
+                }
+                voice_extra_snapshot[:] = [
+                    extra for extra in voice_extra_snapshot
+                    if extra.get("_callback_delivery_id") in delivered_ids
+                ]
                 try:
                     await voice_sess.inject_text_and_request_response(
                         instruction, on_rejected=_on_voice_inject_rejected
@@ -6205,7 +6317,7 @@ class LLMSessionManager:
                         "[%s] trigger_agent_callbacks: voice provider does not support manual inject; falling back to hot-swap (n=%d)",
                         self.lanlan_name, len(voice_snapshot),
                     )
-                    return
+                    return False
                 except Exception as exc:
                     # WS error / fatal / response_already_active race — keep cbs
                     # in the queue so the next phase-idle hook retries them.
@@ -6213,7 +6325,7 @@ class LLMSessionManager:
                         "[%s] trigger_agent_callbacks: voice proactive inject failed: %s; keeping cbs for retry",
                         self.lanlan_name, exc,
                     )
-                    return
+                    return False
 
                 # If the server rejected asynchronously DURING the await above
                 # (case a — ``_on_voice_inject_rejected`` already fired while
@@ -6228,7 +6340,7 @@ class LLMSessionManager:
                         "[%s] trigger_agent_callbacks: voice proactive inject rejected during await; keeping %d cb(s) queued for retry",
                         self.lanlan_name, len(voice_snapshot),
                     )
-                    return
+                    return False
 
                 # Inject succeeded. Drop the cbs we delivered from BOTH queues:
                 # ``pending_agent_callbacks`` (text-mode drain + proactive
@@ -6267,23 +6379,27 @@ class LLMSessionManager:
                     "[%s] trigger_agent_callbacks: voice proactive inject sent (n=%d)",
                     self.lanlan_name, len(voice_snapshot),
                 )
-                return
+                def _resolve_voice_ack_after_rejection_window(
+                    _snapshot=tuple(voice_snapshot),
+                    _state=_reject_state,
+                ) -> None:
+                    if _state["rejected"]:
+                        return
+                    for cb in _snapshot:
+                        if cb.get(DELIVERY_RETRACTED_KEY):
+                            continue
+                        resolve_callback_delivery_ack(cb, True)
 
-        _lang = normalize_language_code(self.user_language, format='short')
-        # Render via _build_callback_instruction on the proactive subset only.
-        # Note: this never returns "" while ``proactive_cbs`` is non-empty —
-        # the renderer always emits at least the per-group outer header even
-        # for callbacks with empty summary/detail. So no empty-instruction
-        # early-return is needed (and the previous version incorrectly cleared
-        # ``pending_extra_replies`` along the way, which is voice-hot-swap
-        # state belonging to a different consumer).
-        instruction = _build_callback_instruction(
-            proactive_cbs,
-            lang=_lang,
-            lanlan_name=self.lanlan_name,
-            master_name=self.master_name,
-            passive=False,
-        )
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.call_later(
+                        _VOICE_PROACTIVE_ACK_GRACE_S,
+                        _resolve_voice_ack_after_rejection_window,
+                    )
+                except RuntimeError:
+                    _resolve_voice_ack_after_rejection_window()
+                return True
+
         callbacks_snapshot = list(proactive_cbs)
 
         # 原子 check-and-claim：若另一路 proactive（router/greeting）在跑或 AI
@@ -6294,7 +6410,16 @@ class LLMSessionManager:
                 "[%s] trigger_agent_callbacks: SM denied claim (phase=%s), re-queuing",
                 self.lanlan_name, self.state.phase.value,
             )
-            return
+            return False
+
+        callbacks_snapshot = [
+            cb for cb in callbacks_snapshot
+            if not cb.get(DELIVERY_RETRACTED_KEY)
+        ]
+        self._purge_retracted_agent_callbacks()
+        if not callbacks_snapshot:
+            await self.state.fire(SessionEvent.PROACTIVE_DONE)
+            return False
 
         # Drop only the snapshot cbs from the queue once we have the SM
         # claim — keep both pre-existing passive cbs and any callbacks
@@ -6311,9 +6436,10 @@ class LLMSessionManager:
             if id(cb) not in snapshot_ids
         ]
 
+        delivered = False
         try:
             if isinstance(self.session, OmniOfflineClient):
-                await self._deliver_agent_callbacks_text(instruction, callbacks_snapshot)
+                delivered = await self._deliver_agent_callbacks_text(callbacks_snapshot)
             else:
                 ws = self.websocket
                 if ws and hasattr(ws, 'client_state') and ws.client_state == ws.client_state.CONNECTED:
@@ -6322,17 +6448,23 @@ class LLMSessionManager:
                     except Exception as e:
                         logger.warning("[%s] trigger_agent_callbacks: auto start_session failed: %s", self.lanlan_name, e)
                 if isinstance(self.session, OmniOfflineClient):
-                    await self._deliver_agent_callbacks_text(instruction, callbacks_snapshot)
+                    delivered = await self._deliver_agent_callbacks_text(callbacks_snapshot)
                     logger.debug("[%s] trigger_agent_callbacks: auto text session delivered", self.lanlan_name)
                 else:
-                    logger.debug("[%s] trigger_agent_callbacks: no websocket/session, keeping for later", self.lanlan_name)
+                    logger.debug("[%s] trigger_agent_callbacks: no websocket/session, re-queueing for later", self.lanlan_name)
+                    self.pending_agent_callbacks.extend(callbacks_snapshot)
+                    callbacks_snapshot[:] = []
         except Exception as e:
             logger.warning("[%s] trigger_agent_callbacks error: %s", self.lanlan_name, e)
             self.pending_agent_callbacks.extend(callbacks_snapshot)
         finally:
             await self.state.fire(SessionEvent.PROACTIVE_DONE)
+        if delivered:
+            for cb in callbacks_snapshot:
+                resolve_callback_delivery_ack(cb, True)
+        return delivered
 
-    async def _deliver_agent_callbacks_text(self, instruction: str, callbacks_snapshot: list) -> None:
+    async def _deliver_agent_callbacks_text(self, callbacks_snapshot: list) -> bool:
         """Execute prompt_ephemeral on an OmniOfflineClient session inside the
         proactive write lock. Caller holds the SM proactive claim (PHASE1).
 
@@ -6343,6 +6475,15 @@ class LLMSessionManager:
         """
         async with self._proactive_write_lock:
             async with self.lock:
+                self._purge_retracted_agent_callback_extras(callbacks_snapshot)
+                active_callbacks = [
+                    cb for cb in callbacks_snapshot
+                    if not cb.get(DELIVERY_RETRACTED_KEY)
+                ]
+                if not active_callbacks:
+                    logger.info("[%s] trigger_agent_callbacks: text proactive callbacks retracted before prompt", self.lanlan_name)
+                    return False
+                callbacks_snapshot[:] = active_callbacks
                 # sticky preempt 复查：与 prepare_proactive_delivery 同样，在持有
                 # self.lock 的临界区内判定。USER_INPUT 路径在本锁段内翻 flag 和
                 # 写 user sid 是原子的，如果此处 preempt==True 说明用户已抢到
@@ -6350,8 +6491,8 @@ class LLMSessionManager:
                 # 再覆盖成 proactive sid，污染 TTS/chunk 分发）。
                 if self.state.is_proactive_preempted():
                     logger.info("[%s] trigger_agent_callbacks: preempted before sid claim, skipping", self.lanlan_name)
-                    self.pending_agent_callbacks.extend(callbacks_snapshot)
-                    return
+                    self.pending_agent_callbacks.extend(active_callbacks)
+                    return False
                 self.current_speech_id = str(uuid4())
                 self._tts_done_queued_for_turn = False
                 self._tts_done_pending_until_ready = False
@@ -6379,10 +6520,37 @@ class LLMSessionManager:
             # and re-passes it (preserve-until-success). NOTE: we do NOT call
             # _stream_cb_media for text mode (that's the voice path, which uses
             # the realtime session's persistent conversation.item).
+            self._purge_retracted_agent_callback_extras(active_callbacks)
+            active_callbacks = [
+                cb for cb in active_callbacks
+                if not cb.get(DELIVERY_RETRACTED_KEY)
+            ]
+            callbacks_snapshot[:] = active_callbacks
+            if not active_callbacks:
+                logger.info("[%s] trigger_agent_callbacks: text proactive callbacks retracted before prompt", self.lanlan_name)
+                return False
             _proactive_images: list = []
-            for _cb in callbacks_snapshot:
+            for _cb in active_callbacks:
                 if isinstance(_cb, dict):
                     _proactive_images.extend(_cb.get("media_images") or [])
+            _lang = normalize_language_code(self.user_language, format='short')
+            instruction = _build_callback_instruction(
+                active_callbacks,
+                lang=_lang,
+                lanlan_name=self.lanlan_name,
+                master_name=self.master_name,
+                passive=False,
+            )
+            ack_resolved = False
+
+            def _resolve_text_delivery_ack(delivered: bool) -> None:
+                nonlocal ack_resolved
+                if ack_resolved:
+                    return
+                ack_resolved = True
+                for cb in active_callbacks:
+                    resolve_callback_delivery_ack(cb, delivered)
+
             _sid_token = _proactive_expected_sid.set(proactive_sid)
             # Text-mode playback boundary for the pacing manager: no frontend
             # audio signal arrives for text delivery, so bracket prompt_ephemeral
@@ -6396,9 +6564,22 @@ class LLMSessionManager:
                 # this guard only covers an emit() that itself somehow raises.
                 logger.debug("[%s] lifecycle_bus emit(text_start) failed", self.lanlan_name)
             try:
-                delivered = await self.session.prompt_ephemeral(
-                    instruction, images=_proactive_images or None
-                )
+                try:
+                    delivered = await self.session.prompt_ephemeral(
+                        instruction,
+                        images=_proactive_images or None,
+                        on_committed=lambda: _resolve_text_delivery_ack(True),
+                    )
+                except Exception as exc:
+                    if ack_resolved:
+                        logger.warning(
+                            "[%s] trigger_agent_callbacks: prompt_ephemeral failed after committed output; treating callback delivery as complete: %s",
+                            self.lanlan_name,
+                            exc,
+                        )
+                        delivered = True
+                    else:
+                        raise
             finally:
                 _proactive_expected_sid.reset(_sid_token)
                 try:
@@ -6408,14 +6589,23 @@ class LLMSessionManager:
                     # the delivery path's finally cleanup.
                     logger.debug("[%s] lifecycle_bus emit(text_end) failed", self.lanlan_name)
             logger.debug("[%s] trigger_agent_callbacks: prompt_ephemeral delivered=%s", self.lanlan_name, delivered)
-            if delivered:
-                # pending_extra_replies parallels pending_agent_callbacks but
-                # is voice-mode-only state. Wiping it on text delivery is the
-                # pre-existing behavior — voice hot-swap that races in after
-                # text-mode delivery would have nothing to inject anyway.
-                self.pending_extra_replies.clear()
+            if delivered or ack_resolved:
+                _resolve_text_delivery_ack(True)
+                delivered_ids = {
+                    cb.get("_callback_delivery_id")
+                    for cb in active_callbacks
+                    if cb.get("_callback_delivery_id")
+                }
+                if delivered_ids:
+                    self.pending_extra_replies = [
+                        extra for extra in self.pending_extra_replies
+                        if extra.get("_callback_delivery_id") not in delivered_ids
+                    ]
+                return True
             else:
-                self.pending_agent_callbacks.extend(callbacks_snapshot)
+                _resolve_text_delivery_ack(False)
+                self.pending_agent_callbacks.extend(active_callbacks)
+                return False
 
     def _is_voice_session_active_or_starting(self) -> bool:
         """Returns True while a voice session is starting or already active, to keep greetings from disturbing the voice stream."""
@@ -6812,6 +7002,53 @@ class LLMSessionManager:
             finally:
                 await self.state.fire(SessionEvent.PROACTIVE_DONE)
 
+    def topic_hook_delivery_allowed(self) -> bool:
+        """Whether a background deep-topic hook may interrupt right now.
+
+        Deep topic hooks are brand-new text openers — the most intrusive,
+        "better none than forced" kind of proactive content. They must honour the same
+        activity gate as ``/api/proactive_chat``: never surface while the
+        user's propensity is ``closed`` (privacy blacklist) or
+        ``restricted_screen_only`` (gaming / focused_work). Unlike the
+        proactive reminiscence path there is NO open-thread exception — a
+        fresh deep topic is not a follow-up to something already on the
+        table, so it shouldn't borrow that escape hatch.
+
+        Fail-open (return True) when no snapshot is available, mirroring the
+        proactive path's "snapshot None ⇒ open propensity" default. Privacy
+        mode is deliberately NOT re-checked here: it gates *accumulation* (the
+        pool is wiped the moment privacy turns on, see enrich_topic_pool), not
+        delivery of a hook that was already built from a pre-privacy snapshot.
+        """
+        tracker = getattr(self, '_activity_tracker', None)
+        if tracker is None:
+            return True
+        try:
+            snap = tracker.get_snapshot_sync()
+        except Exception:
+            return True
+        propensity = getattr(snap, 'propensity', None)
+        return propensity not in ('closed', 'restricted_screen_only')
+
+    def current_topic_language(self) -> Optional[str]:
+        """Live full-locale topic language, for re-resolving at delivery time.
+
+        A topic hook captures its language when it is scheduled; if the
+        session language changes during the quiet window (``set_user_language``
+        with no new chat turn to reschedule the trigger), that captured value
+        goes stale. Topic delivery re-resolves from here so the hook renders in
+        the current locale (preserving zh-TW etc.). Returns None when no
+        dispatcher is available so the caller keeps the captured language.
+        """
+        dispatcher = getattr(self, '_turn_dispatcher', None)
+        getter = getattr(dispatcher, 'current_language', None)
+        if not callable(getter):
+            return None
+        try:
+            return getter()
+        except Exception:
+            return None
+
     def submit_proactive_callback(
         self,
         callback: dict,
@@ -6843,7 +7080,31 @@ class LLMSessionManager:
         legacy "several near-simultaneous cues batched into one turn"
         behaviour (the manager only governs WHEN the batch is released, not
         how many cues per turn)."""
+        callbacks = [cb for cb in callbacks if not cb.get(DELIVERY_RETRACTED_KEY)]
+        # Topic hooks re-validate the activity gate at RELEASE: the submit-time
+        # check in trigger_topic_hook_once can go stale while the manager paces
+        # the cue (min-gap / playback). If the user has since moved into a
+        # restricted activity, drop the topic hook (ack=False) so TopicHookPool
+        # retries later instead of opening a fresh deep topic mid-gaming. Other
+        # channels are unaffected.
+        if callbacks and not self.topic_hook_delivery_allowed():
+            kept = []
+            for cb in callbacks:
+                if cb.get("channel") == "topic_hook":
+                    resolve_callback_delivery_ack(cb, False)
+                    logger.info(
+                        "[%s] topic hook held at release: activity propensity restricts interruption",
+                        self.lanlan_name,
+                    )
+                else:
+                    kept.append(cb)
+            callbacks = kept
         if not callbacks:
+            # This release delivered nothing (everything retracted or dropped
+            # at the gate), so no playback/text lifecycle signal will arrive to
+            # clear the manager's inflight slot. Free it now so the next cue
+            # isn't held behind a phantom in-flight delivery for the timeout.
+            self.proactive_manager.release_inflight_noop()
             return
         for callback in callbacks:
             self.enqueue_agent_callback(callback)
@@ -7164,18 +7425,26 @@ class LLMSessionManager:
         ended up here because the SM denied the claim earlier). The caller
         therefore should NOT prepend an additional notification template.
         """
+        self._purge_retracted_agent_callbacks()
         if not self.pending_agent_callbacks:
             return ""
+        callbacks_snapshot = list(self.pending_agent_callbacks)
+        delivered_to_prompt = False
         try:
             _lang = normalize_language_code(getattr(self, 'user_language', '') or '', format='short') or get_global_language()
-            return _build_callback_instruction(
-                self.pending_agent_callbacks,
+            rendered = _build_callback_instruction(
+                callbacks_snapshot,
                 lang=_lang,
                 lanlan_name=getattr(self, "lanlan_name", "") or "",
                 master_name=getattr(self, "master_name", "") or "",
                 passive=False,
             )
+            delivered_to_prompt = True
+            return rendered
         finally:
+            if delivered_to_prompt:
+                for cb in callbacks_snapshot:
+                    resolve_callback_delivery_ack(cb, True)
             self.pending_agent_callbacks.clear()
 
     async def _perform_final_swap_sequence(self):
@@ -7589,7 +7858,7 @@ class LLMSessionManager:
                     # 里挂——后者也被 proactive abort 流程调用做清理（见
                     # main_routers/system_router.py），那不算用户活动。
                     # text 进 buffer 给 emotion-tier 用。
-                    self._activity_tracker.on_user_message(text=data if isinstance(data, str) else None)
+                    self._note_user_turn(text=data if isinstance(data, str) else None)
                     # Telemetry：D1 漏斗——本进程首条用户消息（lazy import 防循环）。
                     try:
                         from utils.token_tracker import TokenTracker as _TT
@@ -8074,6 +8343,8 @@ class LLMSessionManager:
         normalized_lang = normalize_language_code(language, format='full')
 
         self.user_language = normalized_lang
+        self._conversation_turn_language = normalized_lang
+        self._set_conversation_turn_language(normalized_lang)
         if normalized_lang != language:
             logger.info(f"用户语言已归一化: {language} → {normalized_lang}")
         else:
