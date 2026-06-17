@@ -27,14 +27,14 @@ from main_logic.topic.common import clean_text
 # cues. Keep the rendering intentionally quieter than major ====== sections:
 # memory cues should be available near conversation history, not compete with
 # recent-chat dedup or activity-state decision blocks.
-_INTRO_ZH = "可自然想起的旧话题：\n\n以下旧话题距今较久，适合自然回忆与跟进；只在能顺手接、像随口想起时轻轻带出，别硬聊。"
-_INTRO_ZH_TW = "可自然想起的舊話題：\n\n以下舊話題距今較久，適合自然回憶與跟進；只在能順手接、像隨口想起時輕輕帶出，別硬聊。"
-_INTRO_EN = "Older topics that may come to mind:\n\nThe older topics below are far enough back for natural reminiscence or follow-up; use one only when it flows easily, as if it just came to mind."
-_INTRO_JA = "自然に思い出せる古い話題：\n\n以下は以前の会話で出た古い話題です。自然に流れるときだけ、ふと思い出したように軽く切り出してください。"
-_INTRO_KO = "자연스럽게 떠올릴 오래된 화제:\n\n아래는 이전 대화에서 나온 오래된 화제입니다. 자연스럽게 이어질 때만 문득 떠올린 듯 가볍게 꺼내세요."
-_INTRO_ES = "Temas antiguos que pueden surgir:\n\nLos temas antiguos de abajo vienen de conversaciones previas; usa uno solo si fluye con naturalidad, como si acabara de ocurrírsete."
-_INTRO_PT = "Temas antigos que podem voltar:\n\nOs temas antigos abaixo vêm de conversas anteriores; use apenas um quando fluir naturalmente, como se tivesse acabado de lembrar."
-_INTRO_RU = "Старые темы, которые можно вспомнить:\n\nСтарые темы ниже достаточно давние для естественного возврата; используй одну только если она легко ложится в разговор."
+_INTRO_ZH = "回忆线索：以下旧话题距今较久，可顺手接、但没必要主动提出。"
+_INTRO_ZH_TW = "回憶線索：以下舊話題距今較久，可順手接、但沒必要主動提出。"
+_INTRO_EN = "Memory cues: older topics from prior conversations; okay to pick up naturally, but no need to raise proactively."
+_INTRO_JA = "記憶の手がかり：以前の古い話題です。自然に拾ってもよいですが、無理に持ち出す必要はありません。"
+_INTRO_KO = "기억 단서: 이전 대화의 오래된 화제입니다. 자연스럽게 이어도 되지만, 먼저 꺼낼 필요는 없습니다."
+_INTRO_ES = "Pistas de memoria: temas antiguos de conversaciones previas; puedes retomarlos con naturalidad, pero no hace falta sacarlos activamente."
+_INTRO_PT = "Pistas de memória: temas antigos de conversas anteriores; pode retomá-los naturalmente, mas não precisa puxá-los ativamente."
+_INTRO_RU = "Подсказки памяти: старые темы из прошлых разговоров; можно естественно вернуться к ним, но не нужно поднимать их специально."
 
 _INTROS = {
     "zh": _INTRO_ZH,

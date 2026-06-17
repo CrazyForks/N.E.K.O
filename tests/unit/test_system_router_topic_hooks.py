@@ -79,8 +79,8 @@ def test_topic_hook_locale_preserves_traditional_chinese_request_language():
     )
 
     assert topic_hook_lang == "zh-TW"
-    assert "可自然想起的舊話題：" in prompt
-    assert "可自然想起的旧话题：" not in prompt
+    assert "回憶線索：" in prompt
+    assert "回忆线索：" not in prompt
 
 
 def test_topic_hook_locale_falls_back_to_full_global_language(monkeypatch):
@@ -94,8 +94,8 @@ def test_topic_hook_locale_falls_back_to_full_global_language(monkeypatch):
     )
 
     assert topic_hook_lang == "zh-TW"
-    assert "可自然想起的舊話題：" in prompt
-    assert "可自然想起的旧话题：" not in prompt
+    assert "回憶線索：" in prompt
+    assert "回忆线索：" not in prompt
 
 
 def test_open_threads_compute_uses_topic_hook_locale():
