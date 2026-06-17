@@ -16,10 +16,15 @@ def test_screen_only_and_unfinished_thread_suppress_softer_open_threads():
         unfinished_thread={"text": "刚才没聊完的问题"},
     )
     normal = SimpleNamespace(propensity="open", unfinished_thread=None)
+    normal_with_thread = SimpleNamespace(
+        propensity="open",
+        unfinished_thread={"text": "刚才没聊完的问题"},
+    )
 
     threads = ["AI 答应看测试还没看"]
     assert _open_threads_for_activity_state(None, threads) == threads
     assert _open_threads_for_activity_state(normal, threads) == threads
+    assert _open_threads_for_activity_state(normal_with_thread, threads) == []
     assert _open_threads_for_activity_state(restricted, threads) == []
     assert _open_threads_for_activity_state(restricted_with_thread, threads) == []
 
