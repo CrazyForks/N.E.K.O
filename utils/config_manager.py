@@ -2872,11 +2872,31 @@ class ConfigManager:
                 result.append(bucket)
         return result
 
+    def _get_mimo_storage_keys(self) -> list[str]:
+        """Return the list of voice_storage keys for the current MiMo API key.
+
+        Dual to :meth:`_get_elevenlabs_storage_keys`: MiMo cloned voices live in
+        a ``__MIMO__{suffix}`` bucket keyed by the MiMo API key, so they merge
+        into the current-API voice list regardless of which core/TTS provider is
+        otherwise active (a MiMo clone is selected by ``voice_meta.provider`` at
+        dispatch, not by config — see ``workers/mimo.py``)."""
+        voice_storage = self.load_voice_storage()
+        result = []
+        key = self.get_tts_api_key('mimo')
+        if key:
+            suffix = key[-8:] if len(key) >= 8 else key
+            bucket = f'__MIMO__{suffix}'
+            if bucket in voice_storage:
+                result.append(bucket)
+        return result
+
     @staticmethod
     def _infer_provider_from_storage_key(storage_key: str) -> str:
         """Infer the provider from a voice_storage partition key (only for legacy data compatibility)."""
         if storage_key == '__LOCAL_TTS__':
             return 'local'
+        if storage_key.startswith('__MIMO__'):
+            return 'mimo'
         if storage_key.startswith('__ELEVENLABS__'):
             return 'elevenlabs'
         if storage_key.startswith('__MINIMAX_INTL__'):
@@ -2989,6 +3009,25 @@ class ConfigManager:
                         vdata['provider'] = 'elevenlabs'
                     result[vid] = vdata
 
+        # 合并 MiMo 克隆音色，并确保 provider 字段（dual to ElevenLabs/MiniMax；MiMo 克隆走
+        # 独立 __MIMO__ 桶 + voice_meta 选中，与当前 core/TTS provider 无关）
+        for mimo_key in self._get_mimo_storage_keys():
+            mimo_voices = voice_storage.get(mimo_key, {})
+            for vid, vdata in mimo_voices.items():
+                if vid not in result:
+                    if isinstance(vdata, dict) and 'provider' not in vdata:
+                        vdata['provider'] = 'mimo'
+                    result[vid] = vdata
+
+        if for_listing:
+            # UI 试听列表不需要 MiMo 克隆的参考样本 base64（可达 MB）——剥掉，避免把大 blob
+            # 推给前端。dispatch / preview 走 for_listing=False，仍拿到完整 voice_meta。
+            result = {
+                vid: ({k: v for k, v in vdata.items() if k != 'clone_sample_b64'}
+                      if isinstance(vdata, dict) and 'clone_sample_b64' in vdata else vdata)
+                for vid, vdata in result.items()
+            }
+
         return result
 
     def save_voice_for_current_api(self, voice_id, voice_data):
@@ -3100,8 +3139,11 @@ class ConfigManager:
                 storage_key.startswith('__MINIMAX__')
                 or storage_key.startswith('__MINIMAX_INTL__')
                 or storage_key.startswith('__ELEVENLABS__')
+                or storage_key.startswith('__MIMO__')
                 or storage_key.startswith('__COSYVOICE_INTL__')
             ) and voice_id in voice_storage.get(storage_key, {}):
+                # 克隆身份（含 MiMo 的样本 base64）都在 voice_data 里，删除 entry 随之消失，
+                # 无旁路本地文件需清理（对偶 MiniMax/ElevenLabs）。
                 del voice_storage[storage_key][voice_id]
                 self.save_voice_storage(voice_storage)
                 return True
