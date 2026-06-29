@@ -4431,6 +4431,8 @@
              "yuiCheatInk": "Yui lançou tinta",
              "yuiCheatBanana": "Yui lançou uma casca de banana",
              "yuiCheatBananaSlip": "Você pisou na casca de banana",
+             "playerIcePowerup": "Gelo ativado. Yui ficou congelada",
+             "yuiFrozen": "Yui ainda está congelada, rebatida atrasada",
              "nekoThinking": "Neko está pensando",
              "nekoTurn": "Vez da Neko",
              "copyNeko": "Copie a Neko",
@@ -4676,6 +4678,12 @@
                      "Essa tática da tinta funcionou bem, não foi?"
                  ]
              },
+             "playerIceScore": [
+                 "Hmm, isso não conta. De novo!",
+                 "Espera, eu estava congelada. Esse ponto tem que voltar!",
+                 "Esse gelo ajudou demais. Repete essa!",
+                 "Não vale, eu não conseguia me mexer!"
+             ],
              "easterEgg": {
                 "lateNight": "Rebatendo até esta hora?",
                 "xmas": "Os sinos já estão pendurados e você ainda quer rebater?",

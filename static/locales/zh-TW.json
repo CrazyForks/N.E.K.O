@@ -4431,6 +4431,8 @@
              "yuiCheatInk": "Yui 扔了墨汁",
              "yuiCheatBanana": "Yui 丟了香蕉皮",
              "yuiCheatBananaSlip": "踩到香蕉皮了",
+             "playerIcePowerup": "冰塊生效，Yui 被凍住了",
+             "yuiFrozen": "Yui 還被冰住，出拍延後",
              "nekoThinking": "Neko思考中",
              "nekoTurn": "Neko回合",
              "copyNeko": "復刻Neko",
@@ -4676,6 +4678,12 @@
                      "這團墨汁的戰術效果不錯吧"
                  ]
              },
+             "playerIceScore": [
+                 "唔，不算啦不算啦，重來！",
+                 "被凍住的時候得分不算啦！",
+                 "等一下等一下，剛才我被冰住了！",
+                 "這球有冰塊加成，重來重來！"
+             ],
              "easterEgg": {
                  "lateNight": "這麼晚了還在羽毛球？",
                  "xmas": "鈴鐺都掛上了，還要打喵？",

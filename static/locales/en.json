@@ -4431,6 +4431,8 @@
              "yuiCheatInk": "Yui tossed ink",
              "yuiCheatBanana": "Yui tossed a banana peel",
              "yuiCheatBananaSlip": "You stepped on the banana peel",
+             "playerIcePowerup": "Ice activated. Yui is frozen",
+             "yuiFrozen": "Yui is still frozen, shot delayed",
              "nekoThinking": "Neko is thinking",
              "nekoTurn": "Neko's turn",
              "copyNeko": "Copy Neko",
@@ -4676,6 +4678,12 @@
                      "That ink tactic worked pretty well."
                  ]
              },
+             "playerIceScore": [
+                 "Mmph, that does not count. Do it over!",
+                 "Wait, I was frozen. That point needs a replay!",
+                 "That ice helped too much. Run that one back!",
+                 "No fair, I could not move!"
+             ],
              "easterEgg": {
                  "lateNight": "Still playing badminton this late?",
                  "xmas": "The bells are up and you still want to rally?",

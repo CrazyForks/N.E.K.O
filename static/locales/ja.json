@@ -4431,6 +4431,8 @@
              "yuiCheatInk": "Yui が墨を投げた",
              "yuiCheatBanana": "Yui がバナナの皮を投げた",
              "yuiCheatBananaSlip": "バナナの皮を踏んだ",
+             "playerIcePowerup": "氷が発動。Yui が凍った",
+             "yuiFrozen": "Yui はまだ凍結中、ショットが遅れる",
              "nekoThinking": "Neko が考え中",
              "nekoTurn": "Neko の番",
              "copyNeko": "Neko を再現",
@@ -4676,6 +4678,12 @@
                      "この墨作戦、なかなか効いたでしょ。"
                  ]
              },
+             "playerIceScore": [
+                 "むぅ、それはノーカン。やり直し！",
+                 "待って、凍ってたから今のはやり直し！",
+                 "氷の助けが強すぎるよ。もう一回！",
+                 "ずるい、動けなかったもん。"
+             ],
              "easterEgg": {
                  "lateNight": "こんな時間までショット？",
                  "xmas": "ベルも飾ったのに、まだ打つ？",
