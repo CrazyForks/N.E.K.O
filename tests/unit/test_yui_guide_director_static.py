@@ -124,7 +124,10 @@ def test_home_tutorial_chat_targets_prefer_compact_capsule_over_removed_full_win
 def test_day6_plugin_dashboard_handoff_closes_at_narration_boundary():
     source = _read_director()
 
-    assert "const DAY6_PLUGIN_DASHBOARD_DONE_GRACE_MS = 900;" in source
+    assert "const DAY6_PLUGIN_SIDE_PANEL_CURSOR_MOVE_MS = 1120;" in source
+    assert "const DAY6_PLUGIN_SIDE_PANEL_CURSOR_START_DELAY_MS = 500;" in source
+    assert "const DAY6_PLUGIN_SIDE_PANEL_CLICK_VISIBLE_MS = 480;" in source
+    assert "const DAY6_PLUGIN_DASHBOARD_DONE_GRACE_MS = 120;" in source
     assert "finishPluginDashboardHandoff(reason) {" in source
 
     boundary_block = source.split(
@@ -136,6 +139,13 @@ def test_day6_plugin_dashboard_handoff_closes_at_narration_boundary():
     )[0]
     dashboard_block = source.split(
         "        async runDay6PluginDashboardHandoffFlow(scene, narrationStartedAt) {",
+        1,
+    )[1].split(
+        "        async cleanupDay6PluginDashboardPostNarration(previewState, homeCursorPosition, sceneRunId) {",
+        1,
+    )[0]
+    dashboard_cleanup_block = source.split(
+        "        async cleanupDay6PluginDashboardPostNarration(previewState, homeCursorPosition, sceneRunId) {",
         1,
     )[1].split(
         "        async runDay6PluginSidePanelFlow(scene, narrationStartedAt) {",
@@ -154,10 +164,102 @@ def test_day6_plugin_dashboard_handoff_closes_at_narration_boundary():
     assert "this.finishPluginDashboardHandoff('plugin_dashboard_done_grace_timeout');" in boundary_block
     assert "return await Promise.race([performancePromise, boundaryPromise]);" in boundary_block
 
+    missing_window_block = dashboard_block.split(
+        "if (!pluginDashboardWindow || pluginDashboardWindow.closed) {",
+        1,
+    )[1].split(
+        "if (guardFailed()) {",
+        1,
+    )[0]
+    assert "const cleanupCompleted = await this.cleanupDay6PluginDashboardPostNarration(" in missing_window_block
+    assert "this.day6PluginDashboardPreview = null;" in missing_window_block
+    assert "return cleanupCompleted && !guardFailed();" in missing_window_block
     assert "this.waitForPluginDashboardPerformanceUntilNarrationBoundary(pluginDashboardWindow" in dashboard_block
+    assert "const cleanupCompleted = await this.cleanupDay6PluginDashboardPostNarration(" in dashboard_block
+    assert "if (!cleanupCompleted || guardFailed()) {" in dashboard_block
+    assert "scheduleDay6PluginDashboardPostNarrationCleanup(" not in source
+    assert "await this.closePluginDashboardWindowIfCreatedByGuide('Day 6 插件管理预览完成');" not in dashboard_block
+    assert "await this.closeAgentPanel().catch(() => {});" not in dashboard_block
+    assert "await this.waitForHomeMainUIReady(3600);" not in dashboard_block
+    assert "await this.closePluginDashboardWindowIfCreatedByGuide('Day 6 插件管理预览完成');" in dashboard_cleanup_block
+    assert "await this.closeAgentPanel().catch(() => {});" in dashboard_cleanup_block
+    assert "const homeReady = await this.waitForHomeMainUIReady(3600);" in dashboard_cleanup_block
     assert "this.waitForPluginDashboardPerformanceUntilNarrationBoundary(pluginDashboardWindow" in side_panel_block
     assert "await this.waitForPluginDashboardPerformance(pluginDashboardWindow" not in dashboard_block
     assert "await this.waitForPluginDashboardPerformance(pluginDashboardWindow" not in side_panel_block
+
+
+def test_day6_agent_status_cursor_moves_to_cat_paw_and_clicks_during_line():
+    source = _read_director()
+
+    assert "const DAY6_PLUGIN_AGENT_PANEL_CURSOR_MOVE_MS = 2800;" in source
+    assert "const DAY6_PLUGIN_AGENT_PANEL_CURSOR_START_DELAY_MS = 500;" in source
+    assert "const DAY6_PLUGIN_AGENT_PANEL_CLICK_VISIBLE_MS = 620;" in source
+    assert "const DAY6_PLUGIN_CAT_PAW_CURSOR_OFFSET_Y = 8;" in source
+
+    status_block = source.split(
+        "        async runDay6PluginOpenAgentPanelFlow(scene) {",
+        1,
+    )[1].split(
+        "        async runDay6PluginOpenManagementPanelFlow(scene) {",
+        1,
+    )[0]
+
+    assert "const scaleSceneMs = this.createSceneScaler(scene && scene.voiceKey);" in status_block
+    assert "const catPawButton = await this.waitForVisibleTarget([" in status_block
+    assert "], 2200);" in status_block
+    assert "const catPawButton = this.getFloatingButtonShell(this.getFallbackFloatingButton('agent'))" not in status_block
+    assert "await this.waitForSceneDelay(DAY6_PLUGIN_AGENT_PANEL_CURSOR_START_DELAY_MS)" in status_block
+    assert "await this.moveAvatarFloatingCursor(Object.assign({}, scene || {}, {" in status_block
+    assert (
+        status_block.index("await this.waitForSceneDelay(DAY6_PLUGIN_AGENT_PANEL_CURSOR_START_DELAY_MS)")
+        < status_block.index("await this.moveAvatarFloatingCursor(Object.assign({}, scene || {}, {")
+    )
+    assert "targetPointOffset: { y: DAY6_PLUGIN_CAT_PAW_CURSOR_OFFSET_Y }" in status_block
+    assert "clampTargetPointToRect: true" in status_block
+    assert "targetPointClampInsetPx: 4" in status_block
+    assert "await this.ensureDay6AgentPanelCursorHasStartPoint()" not in source
+    assert "async ensureDay6AgentPanelCursorHasStartPoint() {" not in source
+    assert "const catPawCursorPoint = await this.moveDay6CursorToCatPawButton(" not in source
+    assert "async moveDay6CursorToCatPawButton(element, durationMs) {" not in source
+    assert "getDay6CatPawCursorPoint" not in source
+    assert "catPawCursorPoint: catPawCursorPoint" not in status_block
+    assert "scaleSceneMs(DAY6_PLUGIN_AGENT_PANEL_CURSOR_MOVE_MS, 2100, 5200)" in status_block
+    assert "await this.runActionWithCursorClickExact(" in status_block
+    assert "scaleSceneMs(DAY6_PLUGIN_AGENT_PANEL_CLICK_VISIBLE_MS, 480, 1200)" in status_block
+    assert "() => this.openAgentPanel()" in status_block
+    assert "resolveCursorPointFromRect(rect, options)" in source
+    assert "this.resolveCursorPointFromRect(rect, normalizedOptions)" in source
+
+    management_block = source.split(
+        "        async runDay6PluginOpenManagementPanelFlow(scene) {",
+        1,
+    )[1].split(
+        "        async runDay6PluginDashboardHandoffFlow(scene, narrationStartedAt) {",
+        1,
+    )[0]
+    assert "const scaleSceneMs = this.createSceneScaler(scene && scene.voiceKey);" in management_block
+    assert "await this.ensureDay6ManagementCursorStartsFromPreviousCatPaw()" not in source
+    assert "async ensureDay6ManagementCursorStartsFromPreviousCatPaw() {" not in source
+    assert "previewState.catPawCursorPoint" not in source
+    assert "await this.waitForSceneDelay(DAY6_PLUGIN_SIDE_PANEL_CURSOR_START_DELAY_MS)" in management_block
+    assert (
+        management_block.index("await this.waitForSceneDelay(DAY6_PLUGIN_SIDE_PANEL_CURSOR_START_DELAY_MS)")
+        < management_block.index("const userPluginMovePromise = this.moveCursorToTrackedElement(")
+    )
+    assert "const sidePanelShownPromise = this.ensureAvatarFloatingAgentSidePanel('user-plugin');" not in management_block
+    assert "const movedToUserPlugin = await userPluginMovePromise;" in management_block
+    assert "const sidePanelShown = await this.runActionWithCursorClickExact(" in management_block
+    assert "() => this.ensureAvatarFloatingAgentSidePanel('user-plugin')" in management_block
+    assert (
+        management_block.index("const movedToUserPlugin = await userPluginMovePromise;")
+        < management_block.index("const sidePanelShown = await this.runActionWithCursorClickExact(")
+    )
+    assert "this.applyGuideHighlights({" in management_block
+    assert "key: sceneId + '-clear-user-plugin'," in management_block
+    assert "primary: null" in management_block
+    assert "scaleSceneMs(DAY6_PLUGIN_SIDE_PANEL_CURSOR_MOVE_MS, 840, 2100)" in management_block
+    assert "scaleSceneMs(DAY6_PLUGIN_SIDE_PANEL_CLICK_VISIBLE_MS, 360, 900)" in management_block
 
 
 def test_avatar_floating_guides_delegate_real_cursor_visibility_to_pc():
@@ -218,6 +320,36 @@ def test_avatar_floating_guides_delegate_real_cursor_visibility_to_pc():
     assert "this.syncSystemCursorHidden(false, 'interrupt_angry_exit');" in resistance_source
     assert "this.syncSystemCursorHidden(false, 'destroy');" in director_source
     assert "syncSystemCursorHidden: optional callback" in resistance_source
+
+
+def test_externalized_chat_clear_preserves_pc_cursor_without_stale_cache():
+    director_source = _read_director()
+    app_interpage_source = APP_INTERPAGE_PATH.read_text(encoding="utf-8")
+
+    clear_target_block = director_source.split(
+        "        clearExternalizedChatGuideTarget(options) {",
+        1,
+    )[1].split(
+        "        createAvatarFloatingUnionTarget(key, elements, options) {",
+        1,
+    )[0]
+    cursor_clear_block = app_interpage_source.split(
+        "    function applyYuiGuideChatCursor(kind, options) {",
+        1,
+    )[1].split(
+        "        if (isYuiGuidePcCursorOnlyMode()) {",
+        1,
+    )[0]
+
+    assert "if (shouldClearCursor && shouldPreservePcOverlayCursor) {" in clear_target_block
+    assert "this.setHomePcCursorOutputSuppressedForExternalizedChat(false);" in clear_target_block
+    assert (
+        clear_target_block.index("this.setHomePcCursorOutputSuppressedForExternalizedChat(false);")
+        < clear_target_block.index("this.overlay.syncCursorPosition(currentCursorPoint.x, currentCursorPoint.y, true);")
+    )
+    assert "preservePcOverlayCursor: shouldPreservePcOverlayCursor" in clear_target_block
+    assert "else if (isYuiGuidePcCursorOnlyMode()) {" in cursor_clear_block
+    assert "yuiGuidePcOverlayCursor = null;" in cursor_clear_block
 
 
 def test_day1_intro_activation_copy_matches_auto_advance_behavior():

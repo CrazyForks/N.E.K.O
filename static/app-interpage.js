@@ -2933,6 +2933,7 @@
                         ? message.targetIndex
                         : 0,
                     freezePoint: message.freezePoint === true,
+                    preservePcOverlayCursor: message.preservePcOverlayCursor === true,
                     pcOverlayRunId: getYuiGuidePcOverlayRunIdFromMessage(message),
                     timestamp: getYuiGuideBridgeMessageTimestamp(message)
                 };
@@ -4666,7 +4667,7 @@
             yuiGuideChatCursorRequestToken = yuiGuideChatCursorRequestToken + 1;
         }
         if (!kind) {
-            if (isYuiGuidePcCursorOnlyMode()) {
+            if (isYuiGuidePcCursorOnlyMode() && normalizedOptions.preservePcOverlayCursor !== true) {
                 sendYuiGuidePcOverlayPatch({
                     cursor: { visible: false }
                 }, false, {
@@ -4674,6 +4675,8 @@
                     allowCreateRun: !(normalizedOptions.allowCreatePcOverlayRun === false),
                     skipBegin: normalizedOptions.skipPcOverlayBegin === true
                 });
+            } else if (isYuiGuidePcCursorOnlyMode()) {
+                yuiGuidePcOverlayCursor = null;
             }
             hideYuiGuideChatCursorElement();
             yuiGuideChatCursorPoint = null;
